@@ -87,12 +87,6 @@ else
         -f "protection_rules[]={"type":"required_reviewers","settings":{"required_reviewers":{"users":[]}}}" \
         -f "protection_rules[]={"type":"wait_timer","settings":{"minutes":5}}"
 
-    # Create staging environment
-    gh api repos/$OWNER/$REPO_NAME/environments \
-        -f name=staging \
-        -f "protection_rules[]={"type":"required_reviewers","settings":{"required_reviewers":{"users":[]}}}" \
-        -f "protection_rules[]={"type":"wait_timer","settings":{"minutes":10}}"
-
     # Create prod environment (more restrictive)
     gh api repos/$OWNER/$REPO_NAME/environments \
         -f name=prod \
@@ -109,20 +103,21 @@ echo "=================================="
 echo ""
 echo "🔧 Next Steps:"
 echo ""
-echo "1. 📝 Configure GitHub Secrets"
-echo "   Go to: https://github.com/$OWNER/$REPO_NAME/settings/secrets/actions"
-echo "   Add the following secrets:"
+echo "1. 🔐 Configure AWS OIDC Provider and IAM Role"
+echo "   Follow the detailed setup guide: docs/OIDC-SETUP.md"
+echo "   This involves:"
+echo "   • Creating an OIDC identity provider in AWS IAM"
+echo "   • Creating IAM roles for GitHub Actions"
+echo "   • Attaching necessary permissions"
 echo ""
-echo "   Required Secrets:"
-echo "   • AWS_ACCESS_KEY_ID     - Your AWS access key ID"
-echo "   • AWS_SECRET_ACCESS_KEY - Your AWS secret access key"
+echo "2. 📝 Update Environment Configuration"
+echo "   Edit these files with your actual AWS account ID:"
+echo "   • .github/environments/prod.yml"
+echo "   • .github/environments/dev.yml"
 echo ""
-echo "   Optional Secrets:"
-echo "   • ADMIN_EMAIL           - Admin email for Cognito (default: admin@insightmodai.com)"
-echo "   • BEDROCK_MODEL_ID      - Bedrock model ID (default: us.anthropic.claude-3-5-sonnet-20241022-v2:0)"
-echo "   • ENABLE_CRM           - Enable CRM integration (true/false, default: false)"
+echo "   Update the 'role_arn' field in each file with your AWS account ID"
 echo ""
-echo "2. 🔄 Push Changes"
+echo "3. 🔄 Push Changes"
 echo "   Commit and push your changes to trigger the workflow:"
 echo "   git add ."
 echo "   git commit -m 'feat: add GitHub Actions CI/CD pipeline'"

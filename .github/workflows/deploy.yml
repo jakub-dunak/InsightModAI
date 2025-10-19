@@ -1,10 +1,15 @@
 name: Deploy InsightModAI Agent
 
+# Required for OIDC authentication
+permissions:
+  id-token: write   # This is required for requesting the JWT
+  contents: read    # This is required for actions/checkout
+
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  # push:
+  #   branches: [ main ]
+  # pull_request:
+  #   branches: [ main ]
   workflow_dispatch:
     inputs:
       environment:
@@ -14,7 +19,6 @@ on:
         type: choice
         options:
           - dev
-          - staging
           - prod
       action:
         description: 'Deployment action'
@@ -43,10 +47,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Validate CloudFormation template
@@ -167,10 +170,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Download frontend build
@@ -205,17 +207,20 @@ jobs:
             ADMIN_EMAIL=$(grep 'AdminEmail:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*AdminEmail: *//' | tr -d '"' | tr -d "'")
             BEDROCK_MODEL=$(grep 'BedrockModelId:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*BedrockModelId: *//' | tr -d '"' | tr -d "'")
             AWS_REGION=$(grep 'region:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*region: *//' | tr -d '"' | tr -d "'")
+            AWS_ROLE_ARN=$(grep '  role_arn:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*role_arn: *//' | tr -d '"' | tr -d "'")
 
             echo "STACK_NAME=$STACK_NAME" >> $GITHUB_OUTPUT
             echo "ADMIN_EMAIL=$ADMIN_EMAIL" >> $GITHUB_OUTPUT
             echo "BEDROCK_MODEL=$BEDROCK_MODEL" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=$AWS_REGION" >> $GITHUB_OUTPUT
+            echo "AWS_ROLE_ARN=$AWS_ROLE_ARN" >> $GITHUB_OUTPUT
           else
             echo "Environment configuration not found, using defaults"
             echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
             echo "ADMIN_EMAIL=admin@yourcompany.com" >> $GITHUB_OUTPUT
             echo "BEDROCK_MODEL=us.anthropic.claude-3-5-sonnet-20241022-v2:0" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=us-east-1" >> $GITHUB_OUTPUT
+            echo "AWS_ROLE_ARN=arn:aws:iam::123456789012:role/GitHubActionsRole" >> $GITHUB_OUTPUT
           fi
 
       - name: Set deployment variables
@@ -224,6 +229,7 @@ jobs:
           echo "ADMIN_EMAIL=${{ steps.config.outputs.ADMIN_EMAIL }}" >> $GITHUB_ENV
           echo "BEDROCK_MODEL_ID=${{ steps.config.outputs.BEDROCK_MODEL }}" >> $GITHUB_ENV
           echo "AWS_REGION=${{ steps.config.outputs.AWS_REGION_VAL }}" >> $GITHUB_ENV
+          echo "AWS_ROLE_TO_ASSUME=${{ steps.config.outputs.AWS_ROLE_ARN }}" >> $GITHUB_ENV
 
       - name: Check if stack exists
         id: stack-exists
@@ -414,10 +420,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Load environment configuration for cleanup
@@ -471,10 +476,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Load environment configuration for destroy

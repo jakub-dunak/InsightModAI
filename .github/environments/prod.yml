@@ -1,0 +1,61 @@
+# Production Environment Configuration
+# Used by GitHub Actions workflow for production deployments
+
+name: Production Environment
+
+# AWS Configuration
+aws:
+  region: us-east-1
+
+# Environment Settings
+environment:
+  name: prod
+  stack_name: insightmodai-agent-prod
+
+# CloudFormation Parameters
+cloudformation:
+  parameters:
+    AdminEmail: admin@yourcompany.com
+    BedrockModelId: us.anthropic.claude-3-5-sonnet-20241022-v2:0
+    EnvironmentName: prod
+    EnableCRM: true
+
+# Application Configuration
+app:
+  log_level: INFO
+  enable_debug_logs: false
+
+# Resource Configuration (Production - Performance Optimized)
+resources:
+  lambda:
+    memory_size: 1024
+    timeout: 600
+  dynamodb:
+    billing_mode: PROVISIONED
+    read_capacity: 5
+    write_capacity: 5
+  cloudwatch:
+    log_retention_days: 30
+    enable_alarms: true
+
+# Security Configuration
+security:
+  cognito:
+    mfa_configuration: OPTIONAL
+
+# Deployment Configuration
+deployment:
+  auto_deploy: false
+  create_github_release: true
+  require_approval: true
+
+# Monitoring & Alerting
+monitoring:
+  enable_cloudwatch_dashboard: true
+  alarm_notification_email: alerts@yourcompany.com
+  enable_sns_notifications: true
+
+# Backup Configuration
+backup:
+  enable_s3_versioning: true
+  dynamodb_backup_retention_days: 30

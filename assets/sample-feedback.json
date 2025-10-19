@@ -1,0 +1,129 @@
+[
+  {
+    "customer_id": "customer_001",
+    "feedback_text": "Excellent service! The support team was incredibly helpful and resolved my issue within minutes. I couldn't be more satisfied with the experience.",
+    "channel": "phone",
+    "rating": 5,
+    "metadata": {
+      "category": "technical_support",
+      "priority": "high",
+      "product_version": "2.1.0",
+      "resolved": true
+    }
+  },
+  {
+    "customer_id": "customer_002",
+    "feedback_text": "The new mobile app is fantastic! Much faster and easier to use than before. The customer support team was incredibly helpful when I had questions about the new features.",
+    "channel": "mobile_app",
+    "rating": 5,
+    "metadata": {
+      "category": "product_feedback",
+      "priority": "medium",
+      "app_version": "3.2.1",
+      "features_used": ["navigation", "search", "checkout"]
+    }
+  },
+  {
+    "customer_id": "customer_003",
+    "feedback_text": "Very disappointed with the recent changes. The new interface is confusing and difficult to navigate. The support response time has also been terrible - I waited over 30 minutes for help.",
+    "channel": "email",
+    "rating": 1,
+    "metadata": {
+      "category": "ui_feedback",
+      "priority": "critical",
+      "interface_version": "4.0.0",
+      "wait_time": 1800,
+      "issue_type": "navigation_confusion"
+    }
+  },
+  {
+    "customer_id": "customer_004",
+    "feedback_text": "The product quality is excellent and meets all my expectations. However, the delivery time was longer than advertised. Overall I'm satisfied but there is room for improvement in logistics.",
+    "channel": "web_form",
+    "rating": 3,
+    "metadata": {
+      "category": "delivery_feedback",
+      "priority": "medium",
+      "expected_delivery": "2024-01-15",
+      "actual_delivery": "2024-01-18",
+      "delay_days": 3
+    }
+  },
+  {
+    "customer_id": "customer_005",
+    "feedback_text": "Outstanding experience from start to finish! The website is intuitive, the ordering process was smooth, and the product arrived exactly as described. Will definitely recommend to friends and family.",
+    "channel": "website",
+    "rating": 5,
+    "metadata": {
+      "category": "general_feedback",
+      "priority": "low",
+      "purchase_amount": 299.99,
+      "recommendation_likelihood": "very_high"
+    }
+  },
+  {
+    "customer_id": "customer_006",
+    "feedback_text": "Mixed feelings about the recent update. Some improvements are great (faster loading times), but I miss some of the old features that were removed. The transition could have been handled better with clearer communication.",
+    "channel": "chat",
+    "rating": 3,
+    "metadata": {
+      "category": "feature_feedback",
+      "priority": "medium",
+      "update_version": "2.5.0",
+      "positive_changes": ["loading_speed", "ui_responsiveness"],
+      "negative_changes": ["removed_features", "communication"]
+    }
+  },
+  {
+    "customer_id": "customer_007",
+    "feedback_text": "TERRIBLE customer service experience! I was transferred between 5 different departments and still didn't get my issue resolved. This is completely unacceptable and I'm considering switching to a competitor.",
+    "channel": "phone",
+    "rating": 1,
+    "metadata": {
+      "category": "customer_service",
+      "priority": "critical",
+      "transfers": 5,
+      "total_call_time": 2400,
+      "resolution_status": "unresolved"
+    }
+  },
+  {
+    "customer_id": "customer_008",
+    "feedback_text": "The documentation is comprehensive and well-organized. However, I found a few technical errors in the API examples that could confuse developers. Overall, it's a valuable resource.",
+    "channel": "email",
+    "rating": 4,
+    "metadata": {
+      "category": "documentation_feedback",
+      "priority": "low",
+      "documentation_section": "api_reference",
+      "errors_found": 2,
+      "overall_rating": "good"
+    }
+  },
+  {
+    "customer_id": "customer_009",
+    "feedback_text": "Love the new features in the latest release! The dark mode is especially appreciated, and the performance improvements are noticeable. Keep up the great work!",
+    "channel": "mobile_app",
+    "rating": 5,
+    "metadata": {
+      "category": "feature_feedback",
+      "priority": "low",
+      "new_features": ["dark_mode", "performance_improvements"],
+      "satisfaction_level": "very_high"
+    }
+  },
+  {
+    "customer_id": "customer_010",
+    "feedback_text": "The pricing structure is confusing and doesn't clearly explain what's included in each tier. I ended up purchasing the wrong plan and had to go through a lengthy refund process.",
+    "channel": "web_form",
+    "rating": 2,
+    "metadata": {
+      "category": "pricing_feedback",
+      "priority": "high",
+      "plan_purchased": "pro",
+      "plan_needed": "enterprise",
+      "refund_requested": true,
+      "confusion_level": "high"
+    }
+  }
+]

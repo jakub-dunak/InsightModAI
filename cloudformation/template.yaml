@@ -1,0 +1,1368 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'InsightModAI Agent - Serverless AI agent using Amazon Bedrock AgentCore Runtime for autonomous customer insights analysis'
+
+Parameters:
+  AdminEmail:
+    Type: String
+    Description: Email address for the initial Cognito user (admin)
+    AllowedPattern: '^[^@]+@[^@]+$'
+    ConstraintDescription: Must be a valid email address
+
+  BedrockModelId:
+    Type: String
+    Default: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'
+    Description: Bedrock model ID to use for the Strands agent
+    AllowedValues:
+      - 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'
+      - 'us.anthropic.claude-3-7-sonnet-20250219-v1:0'
+      - 'us.amazon.nova-pro-v1:0'
+
+  EnvironmentName:
+    Type: String
+    Default: 'prod'
+    Description: Environment name for resource naming
+    AllowedValues:
+      - 'dev'
+      - 'staging'
+      - 'prod'
+
+  EnableCRM:
+    Type: String
+    Default: 'false'
+    Description: Enable CRM integration (Salesforce/HubSpot)
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Resources:
+  # =============================================================================
+  # STORAGE RESOURCES
+  # =============================================================================
+
+  # S3 Buckets for data storage
+  FeedbackDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-feedback-data-${EnvironmentName}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIA
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+
+  ProcessedInsightsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-processed-insights-${EnvironmentName}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIA
+            Status: Enabled
+            Transitions:
+              - StorageClass: INTELLIGENT_TIERING
+                TransitionInDays: 30
+
+  AmplifySourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-amplify-source-${EnvironmentName}'
+
+  # =============================================================================
+  # DYNAMODB TABLES
+  # =============================================================================
+
+  FeedbackRecordsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-feedback-records-${EnvironmentName}'
+      AttributeDefinitions:
+        - AttributeName: feedback_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+        - AttributeName: customer_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: feedback_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TimestampIndex
+          KeySchema:
+            - AttributeName: timestamp
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: CustomerIndex
+          KeySchema:
+            - AttributeName: customer_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  SentimentAnalysisTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-sentiment-analysis-${EnvironmentName}'
+      AttributeDefinitions:
+        - AttributeName: feedback_id
+          AttributeType: S
+        - AttributeName: sentiment_score
+          AttributeType: N
+        - AttributeName: analysis_timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: feedback_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: SentimentIndex
+          KeySchema:
+            - AttributeName: sentiment_score
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: AnalysisTimestampIndex
+          KeySchema:
+            - AttributeName: analysis_timestamp
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+
+  AgentConfigTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-agent-config-${EnvironmentName}'
+      AttributeDefinitions:
+        - AttributeName: config_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: config_key
+          KeyType: HASH
+
+  # =============================================================================
+  # LAMBDA FUNCTIONS
+  # =============================================================================
+
+  FeedbackIngestionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-feedback-ingestion-${EnvironmentName}'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: !Sub |
+          import json
+          import boto3
+          import uuid
+          import os
+          from datetime import datetime
+          from botocore.exceptions import ClientError
+
+          def lambda_handler(event, context):
+              """Process S3 object creation events and API Gateway requests for feedback ingestion."""
+              try:
+                  # Handle S3 trigger
+                  if event.get('Records'):
+                      for record in event['Records']:
+                          if record['eventSource'] == 'aws:s3':
+                              bucket = record['s3']['bucket']['name']
+                              key = record['s3']['object']['key']
+                              process_s3_feedback(bucket, key)
+                  # Handle API Gateway request
+                  elif event.get('body'):
+                      body = json.loads(event['body'])
+                      result = process_api_feedback(body)
+                      return {
+                          'statusCode': 200,
+                          'body': json.dumps(result)
+                      }
+
+                  return {'statusCode': 200}
+              except Exception as e:
+                  print(f"Error processing feedback: {e}")
+                  return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
+
+          def process_s3_feedback(bucket, key):
+              """Process feedback uploaded to S3."""
+              s3 = boto3.client('s3')
+              try:
+                  response = s3.get_object(Bucket=bucket, Key=key)
+                  feedback_data = json.loads(response['Body'].read())
+
+                  # Store in DynamoDB
+                  dynamodb = boto3.resource('dynamodb')
+                  table = dynamodb.Table(os.environ['FEEDBACK_TABLE_NAME'])
+
+                  feedback_id = str(uuid.uuid4())
+                  table.put_item(Item={
+                      'feedback_id': feedback_id,
+                      'timestamp': datetime.utcnow().isoformat(),
+                      'source': 's3',
+                      's3_bucket': bucket,
+                      's3_key': key,
+                      **feedback_data
+                  })
+
+                  print(f"Stored feedback {feedback_id} from S3")
+              except Exception as e:
+                  print(f"Error processing S3 feedback: {e}")
+                  raise
+
+          def process_api_feedback(feedback_data):
+              """Process feedback from API Gateway."""
+              # Validate required fields
+              required_fields = ['customer_id', 'feedback_text', 'channel']
+              for field in required_fields:
+                  if field not in feedback_data:
+                      raise ValueError(f"Missing required field: {field}")
+
+              # Store in DynamoDB
+              dynamodb = boto3.resource('dynamodb')
+              table = dynamodb.Table(f'${AWS::StackName}-feedback-records-${EnvironmentName}')
+
+              feedback_id = str(uuid.uuid4())
+              table.put_item(Item={
+                  'feedback_id': feedback_id,
+                  'timestamp': datetime.utcnow().isoformat(),
+                  'source': 'api',
+                  **feedback_data
+              })
+
+              # Optionally trigger agent processing
+              trigger_agent_processing(feedback_id, feedback_data)
+
+              return {'feedback_id': feedback_id, 'status': 'processed'}
+
+          def trigger_agent_processing(feedback_id, feedback_data):
+              """Trigger AgentCore agent processing if enabled."""
+              # Get config from DynamoDB
+              dynamodb = boto3.resource('dynamodb')
+              config_table = dynamodb.Table(os.environ['CONFIG_TABLE_NAME'])
+
+              try:
+                  response = config_table.get_item(Key={'config_key': 'auto_process_feedback'})
+                  if response.get('Item', {}).get('config_value') == 'true':
+                      # Invoke agent processing
+                      lambda_client = boto3.client('lambda')
+                      lambda_client.invoke(
+                          FunctionName=f'${AWS::StackName}-agent-invoker-${EnvironmentName}',
+                          InvocationType='Event',
+                          Payload=json.dumps({
+                              'feedback_id': feedback_id,
+                              'feedback_data': feedback_data
+                          })
+                      )
+              except Exception as e:
+                  print(f"Error triggering agent processing: {e}")
+
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          STACK_NAME: !Ref AWS::StackName
+          FEEDBACK_TABLE_NAME: !Sub '${AWS::StackName}-feedback-records-${EnvironmentName}'
+          SENTIMENT_TABLE_NAME: !Sub '${AWS::StackName}-sentiment-analysis-${EnvironmentName}'
+          CONFIG_TABLE_NAME: !Sub '${AWS::StackName}-agent-config-${EnvironmentName}'
+          INSIGHTS_BUCKET_NAME: !Sub '${AWS::StackName}-processed-insights-${EnvironmentName}'
+          ENVIRONMENT: !Ref EnvironmentName
+      Role: !GetAtt FeedbackIngestionFunctionRole.Arn
+
+  FeedbackIngestionFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt FeedbackRecordsTable.Arn
+                  - !Sub '${FeedbackRecordsTable.Arn}/index/*'
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub '${FeedbackDataBucket.Arn}/*'
+        - PolicyName: InvokeAgentFunction
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt AgentInvokerFunction.Arn
+
+  AgentInvokerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-agent-invoker-${EnvironmentName}'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: !Sub |
+          import json
+          import boto3
+          import uuid
+          import os
+          from botocore.exceptions import ClientError
+
+          def lambda_handler(event, context):
+              """Invoke AgentCore Runtime for feedback processing."""
+              try:
+                  # Extract feedback data
+                  feedback_id = event.get('feedback_id')
+                  feedback_data = event.get('feedback_data', {})
+
+                  if not feedback_id:
+                      return {'statusCode': 400, 'body': json.dumps({'error': 'feedback_id required'})}
+
+                  # Get agent runtime ARN from SSM
+                  ssm = boto3.client('ssm')
+                  try:
+                      response = ssm.get_parameter(Name=f'/insightmodai/agent-runtime-arn-{EnvironmentName}')
+                      agent_runtime_arn = response['Parameter']['Value']
+                  except ssm.exceptions.ParameterNotFound:
+                      return {'statusCode': 503, 'body': json.dumps({'error': 'Agent runtime not deployed'})}
+
+                  # Generate session ID (33+ characters required)
+                  session_id = str(uuid.uuid4()) + str(uuid.uuid4()) + str(uuid.uuid4())
+
+                  # Prepare payload for agent
+                  agent_payload = {
+                      'input': {
+                          'prompt': f'Analyze this customer feedback: {feedback_data.get("feedback_text", "")}',
+                          'feedback_id': feedback_id,
+                          'customer_id': feedback_data.get('customer_id'),
+                          'channel': feedback_data.get('channel'),
+                          'context': {
+                              'previous_sentiments': get_recent_sentiments(feedback_data.get('customer_id'))
+                          }
+                      }
+                  }
+
+                  # Invoke AgentCore Runtime
+                  agentcore_client = boto3.client('bedrock-agentcore')
+                  response = agentcore_client.invoke_agent_runtime(
+                      agentRuntimeArn=agent_runtime_arn,
+                      runtimeSessionId=session_id,
+                      payload=json.dumps(agent_payload),
+                      qualifier='DEFAULT'
+                  )
+
+                  # Process streaming response
+                  if 'text/event-stream' in response.get('contentType', ''):
+                      content = []
+                      for line in response['response'].iter_lines(chunk_size=1):
+                          if line:
+                              line = line.decode('utf-8')
+                              if line.startswith('data: '):
+                                  data = line[6:].strip('"')
+                                  if data and data != '[DONE]':
+                                      content.append(data)
+                      full_response = ' '.join(content)
+                  else:
+                      full_response = json.loads(response['response'].read())
+
+                  # Store analysis results
+                  store_sentiment_analysis(feedback_id, full_response)
+
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps({
+                          'feedback_id': feedback_id,
+                          'agent_response': full_response,
+                          'session_id': session_id
+                      })
+                  }
+
+              except Exception as e:
+                  print(f"Error invoking agent: {e}")
+                  return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
+
+          def get_recent_sentiments(customer_id):
+              """Get recent sentiment history for context."""
+              if not customer_id:
+                  return []
+
+              try:
+                  dynamodb = boto3.resource('dynamodb')
+                  table = dynamodb.Table(f'${AWS::StackName}-sentiment-analysis-${EnvironmentName}')
+
+                  response = table.query(
+                      IndexName='CustomerIndex',
+                      KeyConditionExpression='customer_id = :cid',
+                      ExpressionAttributeValues={':cid': customer_id},
+                      ScanIndexForward=False,
+                      Limit=5
+                  )
+
+                  return [
+                      {
+                          'sentiment_score': item['sentiment_score'],
+                          'analysis_timestamp': item['analysis_timestamp'],
+                          'feedback_text': item.get('feedback_text', '')[:100]
+                      }
+                      for item in response.get('Items', [])
+                  ]
+              except Exception as e:
+                  print(f"Error getting recent sentiments: {e}")
+                  return []
+
+          def store_sentiment_analysis(feedback_id, agent_response):
+              """Store sentiment analysis results in DynamoDB."""
+              try:
+                  # Parse agent response for sentiment data
+                  # This is a simplified example - in practice, you'd parse the actual agent response
+                  sentiment_score = 0.5  # Neutral default
+                  analysis_text = str(agent_response)
+
+                  dynamodb = boto3.resource('dynamodb')
+                  table = dynamodb.Table(f'${AWS::StackName}-sentiment-analysis-${EnvironmentName}')
+
+                  table.put_item(Item={
+                      'feedback_id': feedback_id,
+                      'sentiment_score': sentiment_score,
+                      'analysis_timestamp': boto3.client('dynamodb').meta.service_model.operation_model('PutItem').metadata['timestamp'],
+                      'agent_response': analysis_text,
+                      'model_used': os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-3-5-sonnet-20241022-v2:0')
+                  })
+              except Exception as e:
+                  print(f"Error storing sentiment analysis: {e}")
+
+      Timeout: 300  # 5 minutes for agent processing
+      MemorySize: 512
+      Environment:
+        Variables:
+          STACK_NAME: !Ref AWS::StackName
+          FEEDBACK_TABLE_NAME: !Sub '${AWS::StackName}-feedback-records-${EnvironmentName}'
+          SENTIMENT_TABLE_NAME: !Sub '${AWS::StackName}-sentiment-analysis-${EnvironmentName}'
+          CONFIG_TABLE_NAME: !Sub '${AWS::StackName}-agent-config-${EnvironmentName}'
+          INSIGHTS_BUCKET_NAME: !Sub '${AWS::StackName}-processed-insights-${EnvironmentName}'
+          ENVIRONMENT: !Ref EnvironmentName
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Role: !GetAtt AgentInvokerFunctionRole.Arn
+
+  AgentInvokerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AgentCoreAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:InvokeAgentRuntime
+                Resource: '*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt SentimentAnalysisTable.Arn
+                  - !Sub '${SentimentAnalysisTable.Arn}/index/*'
+        - PolicyName: SSMAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/insightmodai/agent-runtime-arn-${EnvironmentName}'
+
+  CRMIntegratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-crm-integrator-${EnvironmentName}'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: !Sub |
+          import json
+          import boto3
+          import os
+          from botocore.exceptions import ClientError
+
+          def lambda_handler(event, context):
+              """Integrate with CRM systems (Salesforce, HubSpot)."""
+              try:
+                  action = event.get('action')
+                  data = event.get('data', {})
+
+                  if not action:
+                      return {'statusCode': 400, 'body': json.dumps({'error': 'action required'})}
+
+                  # Check if CRM integration is enabled
+                  if not is_crm_enabled():
+                      return {'statusCode': 200, 'body': json.dumps({'message': 'CRM integration disabled'})}
+
+                  # Get CRM credentials from DynamoDB config
+                  crm_config = get_crm_config()
+                  if not crm_config:
+                      return {'statusCode': 503, 'body': json.dumps({'error': 'CRM not configured'})}
+
+                  # Route to appropriate CRM handler
+                  if crm_config['provider'] == 'salesforce':
+                      result = handle_salesforce_action(action, data, crm_config)
+                  elif crm_config['provider'] == 'hubspot':
+                      result = handle_hubspot_action(action, data, crm_config)
+                  else:
+                      return {'statusCode': 400, 'body': json.dumps({'error': 'Unsupported CRM provider'})}
+
+                  return {'statusCode': 200, 'body': json.dumps(result)}
+
+              except Exception as e:
+                  print(f"Error in CRM integration: {e}")
+                  return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
+
+          def is_crm_enabled():
+              """Check if CRM integration is enabled."""
+              try:
+                  dynamodb = boto3.resource('dynamodb')
+                  table = dynamodb.Table(f'${AWS::StackName}-agent-config-${EnvironmentName}')
+
+                  response = table.get_item(Key={'config_key': 'crm_enabled'})
+                  return response.get('Item', {}).get('config_value') == 'true'
+              except Exception as e:
+                  print(f"Error checking CRM status: {e}")
+                  return False
+
+          def get_crm_config():
+              """Get CRM configuration from DynamoDB."""
+              try:
+                  dynamodb = boto3.resource('dynamodb')
+                  table = dynamodb.Table(f'${AWS::StackName}-agent-config-${EnvironmentName}')
+
+                  # Get all CRM-related config
+                  response = table.scan(
+                      FilterExpression='begins_with(config_key, :prefix)',
+                      ExpressionAttributeValues={':prefix': 'crm_'}
+                  )
+
+                  config = {}
+                  for item in response.get('Items', []):
+                      config[item['config_key']] = item['config_value']
+
+                  return config if config else None
+              except Exception as e:
+                  print(f"Error getting CRM config: {e}")
+                  return None
+
+          def handle_salesforce_action(action, data, config):
+              """Handle Salesforce CRM actions."""
+              # Implementation would use Salesforce REST API
+              # This is a placeholder for the actual Salesforce integration
+              return {
+                  'provider': 'salesforce',
+                  'action': action,
+                  'status': 'success',
+                  'data': data
+              }
+
+          def handle_hubspot_action(action, data, config):
+              """Handle HubSpot CRM actions."""
+              # Implementation would use HubSpot API
+              # This is a placeholder for the actual HubSpot integration
+              return {
+                  'provider': 'hubspot',
+                  'action': action,
+                  'status': 'success',
+                  'data': data
+              }
+
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          STACK_NAME: !Ref AWS::StackName
+          FEEDBACK_TABLE_NAME: !Sub '${AWS::StackName}-feedback-records-${EnvironmentName}'
+          SENTIMENT_TABLE_NAME: !Sub '${AWS::StackName}-sentiment-analysis-${EnvironmentName}'
+          CONFIG_TABLE_NAME: !Sub '${AWS::StackName}-agent-config-${EnvironmentName}'
+          INSIGHTS_BUCKET_NAME: !Sub '${AWS::StackName}-processed-insights-${EnvironmentName}'
+          ENVIRONMENT: !Ref EnvironmentName
+      Role: !GetAtt CRMIntegratorFunctionRole.Arn
+
+  CRMIntegratorFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt AgentConfigTable.Arn
+
+  AgentDeploymentFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-agent-deployment-${EnvironmentName}'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: !Sub |
+          import json
+          import boto3
+          import os
+          import zipfile
+          import tempfile
+          from botocore.exceptions import ClientError
+
+          def lambda_handler(event, context):
+              """Custom CloudFormation resource for AgentCore Runtime deployment."""
+              try:
+                  request_type = event['RequestType']
+
+                  if request_type == 'Create':
+                      return create_agent_runtime(event, context)
+                  elif request_type == 'Update':
+                      return update_agent_runtime(event, context)
+                  elif request_type == 'Delete':
+                      return delete_agent_runtime(event, context)
+                  else:
+                      return {'Status': 'Failed', 'Reason': f'Unknown request type: {request_type}'}
+
+              except Exception as e:
+                  print(f"Error in agent deployment: {e}")
+                  return {'Status': 'Failed', 'Reason': str(e)}
+
+          def create_agent_runtime(event, context):
+              """Create AgentCore Runtime."""
+              try:
+                  # Get ECR repository URI
+                  ecr_client = boto3.client('ecr')
+                  repo_response = ecr_client.describe_repositories(repositoryNames=[f'insightmodai-agent-{EnvironmentName}'])
+                  repository_uri = repo_response['repositories'][0]['repositoryUri']
+
+                  # Get latest image
+                  image_response = ecr_client.list_images(repositoryName=f'insightmodai-agent-{EnvironmentName}')
+                  if not image_response['imageIds']:
+                      raise Exception('No images found in ECR repository')
+
+                  latest_image = image_response['imageIds'][0]
+                  image_uri = f'{repository_uri}:{latest_image["imageTag"] or "latest"}'
+
+                  # Create AgentCore Runtime
+                  agentcore_client = boto3.client('bedrock-agentcore')
+                  runtime_response = agentcore_client.create_agent_runtime(
+                      agentRuntimeName=f'insightmodai-agent-{EnvironmentName}',
+                      agentRuntimeArtifact={
+                          'containerConfiguration': {
+                              'containerUri': image_uri
+                          }
+                      },
+                      networkConfiguration={'networkMode': 'PUBLIC'},
+                      roleArn=os.environ['AGENTCORE_EXECUTION_ROLE_ARN']
+                  )
+
+                  runtime_arn = runtime_response['agentRuntimeArn']
+
+                  # Store ARN in SSM Parameter Store
+                  ssm = boto3.client('ssm')
+                  ssm.put_parameter(
+                      Name=f'/insightmodai/agent-runtime-arn-{EnvironmentName}',
+                      Value=runtime_arn,
+                      Type='String',
+                      Overwrite=True
+                  )
+
+                  return {
+                      'Status': 'Success',
+                      'PhysicalResourceId': runtime_arn,
+                      'Data': {
+                          'AgentRuntimeArn': runtime_arn,
+                          'ImageUri': image_uri
+                      }
+                  }
+
+              except Exception as e:
+                  print(f"Error creating agent runtime: {e}")
+                  raise
+
+          def update_agent_runtime(event, context):
+              """Update AgentCore Runtime (placeholder - would need update API when available)."""
+              physical_resource_id = event.get('PhysicalResourceId', '')
+              return {
+                  'Status': 'Success',
+                  'PhysicalResourceId': physical_resource_id
+              }
+
+          def delete_agent_runtime(event, context):
+              """Delete AgentCore Runtime."""
+              try:
+                  physical_resource_id = event.get('PhysicalResourceId', '')
+                  if physical_resource_id:
+                      agentcore_client = boto3.client('bedrock-agentcore')
+                      # Note: delete_agent_runtime API may not be available yet
+                      # agentcore_client.delete_agent_runtime(agentRuntimeArn=physical_resource_id)
+
+                  # Clean up SSM parameter
+                  ssm = boto3.client('ssm')
+                  try:
+                      ssm.delete_parameter(Name=f'/insightmodai/agent-runtime-arn-{EnvironmentName}')
+                  except ssm.exceptions.ParameterNotFound:
+                      pass  # Parameter already deleted
+
+                  return {
+                      'Status': 'Success',
+                      'PhysicalResourceId': physical_resource_id
+                  }
+
+              except Exception as e:
+                  print(f"Error deleting agent runtime: {e}")
+                  return {'Status': 'Failed', 'Reason': str(e)}
+
+      Timeout: 900  # 15 minutes for container operations
+      MemorySize: 512
+      Environment:
+        Variables:
+          STACK_NAME: !Ref AWS::StackName
+          FEEDBACK_TABLE_NAME: !Sub '${AWS::StackName}-feedback-records-${EnvironmentName}'
+          SENTIMENT_TABLE_NAME: !Sub '${AWS::StackName}-sentiment-analysis-${EnvironmentName}'
+          CONFIG_TABLE_NAME: !Sub '${AWS::StackName}-agent-config-${EnvironmentName}'
+          INSIGHTS_BUCKET_NAME: !Sub '${AWS::StackName}-processed-insights-${EnvironmentName}'
+          ENVIRONMENT: !Ref EnvironmentName
+          AGENTCORE_EXECUTION_ROLE_ARN: !GetAtt AgentCoreRuntimeRole.Arn
+      Role: !GetAtt AgentDeploymentFunctionRole.Arn
+
+  AgentDeploymentFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AgentCoreControlAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateAgentRuntime
+                  - bedrock-agentcore:DeleteAgentRuntime
+                Resource: '*'
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:DescribeRepositories
+                  - ecr:ListImages
+                Resource: !Sub 'arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/insightmodai-agent-${EnvironmentName}'
+        - PolicyName: SSMAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/insightmodai/agent-runtime-arn-${EnvironmentName}'
+
+  # =============================================================================
+  # ECR REPOSITORY FOR AGENT CONTAINER
+  # =============================================================================
+
+  AgentECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub 'insightmodai-agent-${EnvironmentName}'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only the last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
+  # =============================================================================
+  # CODEBUILD PROJECT FOR AGENT CONTAINER BUILD
+  # =============================================================================
+
+  AgentBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${AWS::StackName}-agent-build-${EnvironmentName}'
+      Description: 'Build and push InsightModAI agent container'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: ENVIRONMENT
+            Value: !Ref EnvironmentName
+          - Name: STACK_NAME
+            Value: !Ref AWS::StackName
+      Source:
+        Type: S3
+        Location: !Sub '${AmplifySourceBucket}/agent-source.zip'
+      TimeoutInMinutes: 60
+
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        - arn:aws:iam::aws:policy/AWSLambda_FullAccess
+      Policies:
+        - PolicyName: CloudFormationAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:GetTemplate
+                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*'
+
+  # =============================================================================
+  # API GATEWAY
+  # =============================================================================
+
+  InsightModAIApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${AWS::StackName}-api-${EnvironmentName}'
+      Description: 'API Gateway for InsightModAI Agent'
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  FeedbackResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ParentId: !GetAtt InsightModAIApi.RootResourceId
+      PathPart: 'feedback'
+
+  FeedbackPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ResourceId: !Ref FeedbackResource
+      HttpMethod: POST
+      AuthorizationType: NONE  # Public endpoint for feedback submission
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FeedbackIngestionFunction.Arn}/invocations'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: |
+                #set($inputRoot = $input.path('$'))
+                {
+                  "feedback_id": "$inputRoot.feedback_id",
+                  "status": "processed"
+                }
+
+  InsightsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ParentId: !GetAtt InsightModAIApi.RootResourceId
+      PathPart: 'insights'
+
+  InsightsGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ResourceId: !Ref InsightsResource
+      HttpMethod: GET
+      AuthorizationType: AWS_IAM  # Requires signed requests
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentInvokerFunction.Arn}/invocations'
+
+  AgentResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ParentId: !GetAtt InsightModAIApi.RootResourceId
+      PathPart: 'agent'
+
+  AgentPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ResourceId: !Ref AgentResource
+      HttpMethod: POST
+      AuthorizationType: AWS_IAM  # Requires signed requests
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentInvokerFunction.Arn}/invocations'
+
+  ConfigResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ParentId: !GetAtt InsightModAIApi.RootResourceId
+      PathPart: 'config'
+
+  ConfigPutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ResourceId: !Ref ConfigResource
+      HttpMethod: PUT
+      AuthorizationType: AWS_IAM  # Requires signed requests
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CRMIntegratorFunction.Arn}/invocations'
+
+  ApiGatewayRootMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ResourceId: !GetAtt InsightModAIApi.RootResourceId
+      HttpMethod: ANY
+      AuthorizationType: NONE
+
+  # CORS Support
+  OptionsFeedbackMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ResourceId: !Ref FeedbackResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+
+  OptionsInsightsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ResourceId: !Ref InsightsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+
+  OptionsAgentMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ResourceId: !Ref AgentResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+
+  OptionsConfigMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ResourceId: !Ref ConfigResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'PUT,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - FeedbackPostMethod
+      - InsightsGetMethod
+      - AgentPostMethod
+      - ConfigPutMethod
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      StageName: !Ref EnvironmentName
+      Description: !Sub 'Stage for ${EnvironmentName} environment'
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
+
+  ApiGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  # =============================================================================
+  # COGNITO AUTHENTICATION
+  # =============================================================================
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${AWS::StackName}-users-${EnvironmentName}'
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub '${AWS::StackName}-client-${EnvironmentName}'
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+      PreventUserExistenceErrors: ENABLED
+
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub '${AWS::StackName}-identity-${EnvironmentName}'
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+
+  # =============================================================================
+  # AWS AMPLIFY FOR REACT DASHBOARD
+  # =============================================================================
+
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Sub '${AWS::StackName}-dashboard-${EnvironmentName}'
+      Repository: !Sub 'https://github.com/${AWS::AccountId}/InsightModAI'
+      BuildSpec: |
+        version: 1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - npm ci
+            build:
+              commands:
+                - npm run build
+          artifacts:
+            baseDirectory: build
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - node_modules/**/*
+      EnvironmentVariables:
+        - Name: REACT_APP_API_ENDPOINT
+          Value: !Sub 'https://${InsightModAIApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}'
+        - Name: REACT_APP_USER_POOL_ID
+          Value: !Ref UserPool
+        - Name: REACT_APP_USER_POOL_CLIENT_ID
+          Value: !Ref UserPoolClient
+        - Name: REACT_APP_IDENTITY_POOL_ID
+          Value: !Ref IdentityPool
+        - Name: REACT_APP_REGION
+          Value: !Ref AWS::Region
+
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: main
+      EnableAutoBuild: true
+
+  # =============================================================================
+  # CLOUDWATCH MONITORING
+  # =============================================================================
+
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-feedback-ingestion-${EnvironmentName}'
+      RetentionInDays: 30
+
+  CloudWatchDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${AWS::StackName}-dashboard-${EnvironmentName}'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "log",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '${CloudWatchLogGroup}' | fields @timestamp, @message | sort @timestamp desc | limit 100",
+                "region": "${AWS::Region}",
+                "title": "Feedback Ingestion Logs"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", "FunctionName", "${FeedbackIngestionFunction}"]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Lambda Invocations",
+                "period": 300
+              }
+            }
+          ]
+        }
+
+  NegativeSentimentAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-negative-sentiment-${EnvironmentName}'
+      AlarmDescription: 'Alarm when average sentiment score drops below 0.3 for 2 consecutive periods'
+      MetricName: SentimentScore
+      Namespace: InsightModAI
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0.3
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      ActionsEnabled: true
+
+  HighLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-high-latency-${EnvironmentName}'
+      AlarmDescription: 'Alarm when Lambda duration exceeds 10 seconds'
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref FeedbackIngestionFunction
+
+  # =============================================================================
+  # IAM ROLES
+  # =============================================================================
+
+  AgentCoreRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-agentcore-runtime-${EnvironmentName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+  # =============================================================================
+  # SSM PARAMETERS FOR CONFIGURATION
+  # =============================================================================
+
+  AutoProcessFeedbackParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/insightmodai/auto-process-feedback-${EnvironmentName}'
+      Type: String
+      Value: 'true'
+      Description: 'Enable automatic processing of feedback with AgentCore agent'
+
+  CRMEnabledParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/insightmodai/crm-enabled-${EnvironmentName}'
+      Type: String
+      Value: !Ref EnableCRM
+      Description: 'Enable CRM integration'
+
+  # =============================================================================
+  # OUTPUTS
+  # =============================================================================
+
+Outputs:
+  ApiEndpoint:
+    Description: 'API Gateway endpoint URL'
+    Value: !Sub 'https://${InsightModAIApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-api-endpoint-${EnvironmentName}'
+
+  AmplifyAppURL:
+    Description: 'Amplify dashboard URL'
+    Value: !Sub 'https://${AmplifyBranch.BranchName}.${AmplifyApp.AppId}.amplifyapp.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-amplify-url-${EnvironmentName}'
+
+  FeedbackBucketName:
+    Description: 'S3 bucket for feedback data'
+    Value: !Ref FeedbackDataBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-feedback-bucket-${EnvironmentName}'
+
+  UserPoolId:
+    Description: 'Cognito User Pool ID'
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub '${AWS::StackName}-user-pool-id-${EnvironmentName}'
+
+  UserPoolClientId:
+    Description: 'Cognito User Pool Client ID'
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub '${AWS::StackName}-user-pool-client-id-${EnvironmentName}'
+
+  ECRRepositoryUri:
+    Description: 'ECR repository URI for agent container'
+    Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/insightmodai-agent-${EnvironmentName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ecr-uri-${EnvironmentName}'

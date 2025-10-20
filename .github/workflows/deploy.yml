@@ -244,45 +244,70 @@ jobs:
           ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
           STACK_NAME="insightmodai-agent-${ENVIRONMENT}"
 
-          # Generate unique Cognito domain
-          BASE_DOMAIN="insightmodai-${ENVIRONMENT}"
-          COGNITO_DOMAIN="${BASE_DOMAIN}"
-          ATTEMPTS=0
-          MAX_ATTEMPTS=10
-
-          while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-            echo "🔍 Checking if Cognito domain '$COGNITO_DOMAIN' is available..."
-            
-            if aws cognito-idp describe-user-pool-domain \
-                --domain "$COGNITO_DOMAIN" \
-                --region us-west-2 >/dev/null 2>&1; then
-              echo "❌ Domain '$COGNITO_DOMAIN' already exists, trying variation..."
-              SUFFIX=$(openssl rand -hex 2)
-              COGNITO_DOMAIN="${BASE_DOMAIN}-${SUFFIX}"
-              ATTEMPTS=$((ATTEMPTS + 1))
-            else
-              echo "✅ Domain '$COGNITO_DOMAIN' is available!"
-              break
-            fi
-          done
-
-          if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then
-            echo "❌ Could not find available Cognito domain after $MAX_ATTEMPTS attempts"
-            exit 1
-          fi
-
-          echo "🎯 Using Cognito domain: $COGNITO_DOMAIN"
-
-          # Check if stack exists
+*          # Check if stack exists and get existing Cognito domain if available
           if aws cloudformation describe-stacks --stack-name $STACK_NAME --region us-west-2 >/dev/null 2>&1; then
-            echo "📝 Updating existing stack: $STACK_NAME"
+            echo "📝 Stack $STACK_NAME exists, retrieving existing Cognito domain..."
+            
+            # Get existing Cognito domain from stack parameters
+            EXISTING_DOMAIN=$(aws cloudformation describe-stacks \
+              --stack-name $STACK_NAME \
+              --region us-west-2 \
+              --query 'Stacks[0].Parameters[?ParameterKey==`CognitoDomainName`].ParameterValue' \
+              --output text 2>/dev/null || echo "")
+            
+            if [ -n "$EXISTING_DOMAIN" ]; then
+              echo "✅ Reusing existing Cognito domain: $EXISTING_DOMAIN"
+              COGNITO_DOMAIN="$EXISTING_DOMAIN"
+            else
+              echo "⚠️ Could not retrieve existing domain, will generate new one"
+              COGNITO_DOMAIN=""
+            fi
+            
             OPERATION="update-stack"
             WAIT_OPERATION="stack-update-complete"
           else
             echo "🆕 Creating new stack: $STACK_NAME"
+            COGNITO_DOMAIN=""
             OPERATION="create-stack"
             WAIT_OPERATION="stack-create-complete"
           fi
+
+          # Generate unique Cognito domain if needed
+          if [ -z "$COGNITO_DOMAIN" ]; then
+            echo "🔍 Generating unique Cognito domain..."
+            BASE_DOMAIN="insightmodai-${ENVIRONMENT}"
+            # Use timestamp + random for more uniqueness
+            TIMESTAMP=$(date +%s | tail -c 4)
+            RANDOM_SUFFIX=$(openssl rand -hex 3)
+            COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP}-${RANDOM_SUFFIX}"
+            
+            # Verify domain is available
+            ATTEMPTS=0
+            MAX_ATTEMPTS=5
+            
+            while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+              echo "🔍 Checking if domain '$COGNITO_DOMAIN' is available..."
+              
+              if aws cognito-idp describe-user-pool-domain \
+                  --domain "$COGNITO_DOMAIN" \
+                  --region us-west-2 >/dev/null 2>&1; then
+                echo "❌ Domain exists, generating new one..."
+                RANDOM_SUFFIX=$(openssl rand -hex 3)
+                COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP}-${RANDOM_SUFFIX}"
+                ATTEMPTS=$((ATTEMPTS + 1))
+              else
+                echo "✅ Domain '$COGNITO_DOMAIN' is available!"
+                break
+              fi
+            done
+            
+            if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then
+              echo "❌ Could not find available domain. Please clean up old Cognito domains or wait a few minutes."
+              exit 1
+            fi
+          fi
+
+          echo "🎯 Using Cognito domain: $COGNITO_DOMAIN"
 
           # Deploy the stack
           aws cloudformation $OPERATION \

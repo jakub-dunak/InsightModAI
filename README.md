@@ -1,14 +1,14 @@
-# GlobalInvoiceAI Agent
+# InsightModAI Agent
 
-## 🚀 Autonomous AI Agent for Invoice Management & Insights
+## 🚀 Autonomous AI Agent for Customer Insights Analysis
 
-GlobalInvoiceAI Agent is a serverless, autonomous AI agent that processes invoices, extracts key information, and provides intelligent insights for business operations. Built entirely on AWS with Amazon Bedrock AgentCore Runtime, it automates invoice processing workflows with enterprise-grade reliability.
+InsightModAI Agent is a serverless, autonomous AI agent that processes customer feedback, analyzes sentiment, identifies themes, and generates actionable insights for business operations. Built entirely on AWS with Amazon Bedrock AgentCore Runtime, it automates customer insights workflows with enterprise-grade reliability.
 
 ## ✨ Key Features
 
-- **🧠 Autonomous Processing**: Automatically processes invoices using advanced AI models for data extraction
-- **📊 Real-time Insights**: Extracts invoice data, validates information, and generates reports in real-time
-- **🔗 ERP Integration**: Optional integration with SAP, Oracle, and other ERP systems
+- **🧠 Autonomous Processing**: Automatically processes customer feedback using advanced AI models for sentiment analysis
+- **📊 Real-time Insights**: Extracts themes, validates sentiment, and generates reports in real-time
+- **🔗 CRM Integration**: Optional integration with Salesforce, HubSpot, and other CRM systems
 - **📈 Visual Dashboard**: React-based admin interface for monitoring and configuration
 - **🔒 Enterprise Security**: AWS Cognito authentication with least-privilege IAM roles
 - **📊 Monitoring**: Comprehensive CloudWatch monitoring and alerting
@@ -19,9 +19,9 @@ GlobalInvoiceAI Agent is a serverless, autonomous AI agent that processes invoic
 ### Core Components
 
 1. **Amazon Bedrock AgentCore Runtime** - Containerized Strands agent for AI processing
-2. **AWS Lambda Functions** - Serverless compute for invoice ingestion and processing
-3. **Amazon DynamoDB** - NoSQL database for invoice storage and configuration
-4. **Amazon S3** - Object storage for processed invoices, reports, and static assets
+2. **AWS Lambda Functions** - Serverless compute for feedback ingestion and processing
+3. **Amazon DynamoDB** - NoSQL database for feedback storage and configuration
+4. **Amazon S3** - Object storage for processed insights, reports, and static assets
 5. **Amazon API Gateway** - REST API for external integrations
 6. **AWS Amplify** - React dashboard hosting with Cognito authentication
 7. **Amazon CloudWatch** - Monitoring, logging, and alerting
@@ -29,10 +29,10 @@ GlobalInvoiceAI Agent is a serverless, autonomous AI agent that processes invoic
 ### Data Flow
 
 ```
-Invoice Upload → API Gateway → Lambda (Ingestion) → DynamoDB (Storage)
-                                                           ↓
-AgentCore Runtime (Strands Agent) → Data Extraction → DynamoDB (Results)
-                                                           ↓
+Feedback Upload → API Gateway → Lambda (Ingestion) → DynamoDB (Storage)
+                                                          ↓
+AgentCore Runtime (Strands Agent) → Sentiment Analysis → DynamoDB (Results)
+                                                          ↓
 Report Generation → S3 (Reports) → React Dashboard (Visualization)
 ```
 
@@ -41,271 +41,275 @@ Report Generation → S3 (Reports) → React Dashboard (Visualization)
 ### Prerequisites
 
 - AWS Account with appropriate permissions
-- Node.js 16+ and npm (for React dashboard development)
+- Node.js 18+ and npm (for React dashboard development)
 - AWS CLI configured with credentials
+- GitHub account (for GitHub Actions OIDC deployment)
 
 ### Deployment
 
-1. **Deploy Infrastructure**
+The project uses **GitHub Actions** for automated deployment with OIDC authentication.
+
+1. **Set up AWS OIDC Provider** (one-time setup)
+   
+   Follow the instructions in `docs/OIDC-SETUP.md` to configure GitHub OIDC authentication in your AWS account.
+
+2. **Configure GitHub Secrets**
+   
+   Add the following secret to your GitHub repository:
+   - `AWS_ACCOUNT_ID`: Your AWS account ID
+
+3. **Deploy via GitHub Actions**
+   
    ```bash
    # Clone the repository
-   git clone https://github.com/your-org/GlobalInvoiceAI.git
-   cd GlobalInvoiceAI
+   git clone https://github.com/your-org/InsightModAI.git
+   cd InsightModAI
 
-   # Deploy CloudFormation stack
-   aws cloudformation create-stack \
-     --stack-name globalinvoiceai-agent \
-     --template-body file://cloudformation/template.yaml \
-     --parameters \
-       ParameterKey=AdminEmail,ParameterValue=admin@yourcompany.com \
-       ParameterKey=EnvironmentName,ParameterValue=prod \
-       ParameterKey=EnableCRM,ParameterValue=false \
-     --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
+   # Push to GitHub to trigger deployment
+   git push origin main
+
+   # Or manually trigger deployment
+   # Go to Actions → Deploy InsightModAI Agent → Run workflow
+   # Select environment (dev/prod)
    ```
 
-2. **Create Admin User**
-   ```bash
-   # Get stack outputs
-   aws cloudformation describe-stacks --stack-name globalinvoiceai-agent --query 'Stacks[0].Outputs'
+### Manual Deployment
 
-   # Create Cognito user (replace with actual UserPoolId)
-   aws cognito-idp admin-create-user \
-     --user-pool-id YOUR_USER_POOL_ID \
-     --username admin@yourcompany.com \
-     --user-attributes Name=email,Value=admin@yourcompany.com Name=email_verified,Value=true \
-     --temporary-password TempPass123! \
-     --message-action SUPPRESS
-   ```
+If you prefer to deploy manually without GitHub Actions:
 
-3. **Access Dashboard**
-   - Open the Amplify URL from stack outputs in your browser
-   - Sign in with the admin email and temporary password
-   - Set a permanent password when prompted
+```bash
+# Package CloudFormation template
+aws cloudformation package \
+  --template-file cloudformation/template.yaml \
+  --s3-bucket insightmodai-deployment-us-west-2-dev \
+  --output-template-file packaged-template.yaml \
+  --region us-west-2
 
-4. **Test the System**
-   ```bash
-   # Submit sample invoice via API Gateway
-   curl -X POST https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com/prod/invoices \
-     -H "Content-Type: application/json" \
-     -d '{
-       "invoice_number": "INV-2024-001",
-       "vendor_name": "Acme Corp",
-       "invoice_date": "2024-01-15",
-       "amount": 1250.00,
-       "currency": "USD"
-     }'
+# Deploy CloudFormation stack
+aws cloudformation deploy \
+  --template-file packaged-template.yaml \
+  --stack-name insightmodai-agent-dev \
+  --parameter-overrides \
+    EnvironmentName=dev \
+    AdminEmail=admin@yourcompany.com \
+    BedrockModelId=us.anthropic.claude-3-5-sonnet-20241022-v2:0 \
+    CognitoDomainName=insightmodai-dev-$(openssl rand -hex 2) \
+  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+  --region us-west-2
+```
 
-   # Check processing results
-   curl -X GET https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com/prod/insights
-   ```
+## 📊 Usage Examples
 
-## 🔧 Configuration
+### 1. Submit Feedback via API
 
-### Module Control
+```bash
+curl -X POST https://your-api-id.execute-api.us-west-2.amazonaws.com/prod/feedback \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_id": "cust_12345",
+    "feedback_text": "Great product! Love the new features.",
+    "source": "web_survey",
+    "timestamp": "2024-10-20T10:00:00Z"
+  }'
+```
 
-Access the **Module Control** panel in the dashboard to configure:
+### 2. Query Sentiment Trends
 
-- **ERP Integration**: Enable/disable SAP/Oracle integration
-- **Auto Processing**: Enable/disable automatic invoice processing
-- **Validation Rules**: Set thresholds for invoice validation alerts
-- **Processing Settings**: Configure batch sizes and timeouts
+```bash
+curl -X GET https://your-api-id.execute-api.us-west-2.amazonaws.com/prod/insights/trends \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
 
-### ERP Integration Setup
+### 3. Generate Report
 
-1. Enable ERP integration in the Module Control panel
-2. Configure ERP credentials in the DynamoDB config table:
-   ```json
-   {
-     "config_key": "erp_provider",
-     "config_value": "sap"
-   }
-   {
-     "config_key": "erp_api_key",
-     "config_value": "your_erp_api_key"
-   }
-   ```
+```bash
+curl -X POST https://your-api-id.execute-api.us-west-2.amazonaws.com/prod/insights/report \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '{
+    "report_type": "weekly_sentiment",
+    "start_date": "2024-10-13",
+    "end_date": "2024-10-20"
+  }'
+```
 
-## 📊 Dashboard Features
+## 🎯 Agent Configuration
 
-### Dashboard Overview
-- **System Status**: Real-time health checks of all components
-- **Key Metrics**: Total invoices processed, average processing times, validation success rates
-- **Recent Activity**: Latest invoice processing events
-- **Alerts**: Critical system alerts and notifications
+Configure the agent behavior via the admin dashboard or API:
 
-### Module Control Panel
-- Toggle system modules on/off
-- Configure validation rules
-- Set processing parameters
-- Manage ERP integrations
+```json
+{
+  "sentiment_threshold": 0.7,
+  "theme_extraction_enabled": true,
+  "auto_report_generation": true,
+  "crm_integration": {
+    "enabled": false,
+    "provider": "salesforce",
+    "sync_interval": "hourly"
+  },
+  "notification_preferences": {
+    "negative_sentiment_alert": true,
+    "threshold": -0.5
+  }
+}
+```
 
-### Observability Dashboard
-- Agent execution traces
-- Tool invocation logs
-- Session tracking
-- Real-time streaming responses
+## 🔧 Tech Stack
 
-### Monitoring Dashboard
-- Invoice processing trends
-- Validation accuracy metrics
-- Processing latency graphs
-- CloudWatch alarm status
+### AI & Processing
+- **Amazon Bedrock** - Claude 3.5 Sonnet for sentiment analysis and theme extraction
+- **AgentCore Runtime** - Containerized Strands framework for agent orchestration
+- **AWS Lambda** - Serverless Python 3.11 functions
 
-### Memory Viewer
-- Processing history
-- Memory namespace browsing
-- Session summaries
-- Pattern insights
+### Data & Storage
+- **Amazon DynamoDB** - NoSQL database with on-demand billing
+- **Amazon S3** - Object storage with lifecycle policies
+- **Amazon ECR** - Container registry for AgentCore images
+
+### API & Integration
+- **Amazon API Gateway** - REST API with CORS support
+- **AWS Amplify** - React dashboard hosting
+- **Amazon Cognito** - User authentication and authorization
+
+### DevOps & Monitoring
+- **GitHub Actions** - CI/CD with OIDC authentication
+- **Amazon CloudWatch** - Logs, metrics, and alarms
+- **AWS CloudFormation** - Infrastructure as Code
+
+## 📈 Monitoring & Observability
+
+The system includes comprehensive monitoring:
+
+- **Dashboard Metrics**: Real-time feedback processing rates, sentiment distributions
+- **CloudWatch Alarms**: Automated alerts for errors, latency spikes, negative sentiment trends
+- **Logs**: Structured logging for all Lambda functions and agent operations
+- **Tracing**: X-Ray integration for distributed tracing (optional)
+
+Access the CloudWatch Dashboard:
+```bash
+aws cloudwatch get-dashboard \
+  --dashboard-name insightmodai-agent-dev-dashboard \
+  --region us-west-2
+```
 
 ## 🔒 Security
 
-### Authentication
-- AWS Cognito User Pool with MFA support
-- Role-based access control (RBAC)
-- Secure token-based API authentication
+- **Authentication**: AWS Cognito with hosted UI
+- **Authorization**: IAM roles with least-privilege policies
+- **Encryption**: Data encrypted at rest (S3, DynamoDB) and in transit (TLS 1.2+)
+- **API Security**: API Gateway with JWT validation
+- **Secrets Management**: AWS Secrets Manager for CRM credentials
+- **Network**: VPC endpoints for private communication (optional)
 
-### Data Protection
-- All data encrypted at rest (KMS)
-- TLS 1.3 for all data in transit
-- Least-privilege IAM roles
-- VPC endpoints for internal communications
+## 💰 Cost Optimization
 
-### Compliance
-- GDPR-ready data handling
-- SOC 2 Type II compliance framework
-- Audit logging for all operations
+**Estimated Monthly Costs (Development Environment):**
+- Lambda: ~$0.50 (pay-per-invocation)
+- Bedrock: ~$2.00 (pay-per-token)
+- DynamoDB: ~$1.00 (on-demand)
+- S3: ~$0.10 (storage + requests)
+- **Total: ~$3.60/month** (near-zero when idle)
 
-## 📈 Performance & Cost
-
-### Performance Characteristics
-- **Sub-second API responses** for invoice ingestion
-- **< 30 second processing** for complex data extraction
-- **99.9% uptime** with multi-AZ deployment
-- **Auto-scaling** based on demand
-
-### Cost Optimization
-- **Serverless architecture** - pay only for usage
-- **Intelligent Tiering** on S3 for cost-effective storage
-- **On-demand DynamoDB** billing
-- **Free tier** for CloudWatch basic monitoring
-
-### Estimated Monthly Costs (Small Scale)
-- **Lambda**: $5-20 (1M invocations)
-- **DynamoDB**: $1-5 (on-demand)
-- **S3**: $1-2 (5GB storage)
-- **Bedrock**: $10-50 (depending on usage)
-- **API Gateway**: $3-5 (1M requests)
-- **Cognito**: Free tier covers basic usage
-
-## 🛠️ Development
-
-### Local Development Setup
-
-1. **Install Dependencies**
-   ```bash
-   cd frontend
-   npm install
-   ```
-
-2. **Start Development Server**
-   ```bash
-   npm start
-   ```
-
-3. **Build for Production**
-   ```bash
-   npm run build
-   ```
-
-### Agent Development
-
-The Strands agent is containerized and can be developed locally:
-
-```bash
-# Install Python dependencies
-pip install -r agent/requirements.txt
-
-# Run agent locally
-cd agent
-python insights_agent.py
-
-# Test agent endpoints
-curl http://localhost:8080/ping
-curl -X POST http://localhost:8080/invocations \
-  -H "Content-Type: application/json" \
-  -d '{"input": {"prompt": "Hello"}}'
-```
+**Production Scale (10,000 feedback items/month):**
+- Lambda: ~$5.00
+- Bedrock: ~$20.00
+- DynamoDB: ~$10.00
+- S3: ~$1.00
+- API Gateway: ~$3.50
+- **Total: ~$39.50/month**
 
 ## 🧪 Testing
 
-### Automated Tests
+### Run Unit Tests
 ```bash
-# Run all tests
-npm test
-
-# Run tests with coverage
-npm test -- --coverage
+cd agent
+uv run python -m pytest tests/
 ```
 
-### Manual Testing
-1. Submit feedback via API
-2. Check processing in dashboard
-3. Verify sentiment analysis results
-4. Test CRM integration (if enabled)
+### Test API Endpoints
+```bash
+# Test feedback ingestion
+npm run test:api -- --endpoint feedback
 
-## 📋 Deployment Guide
+# Test sentiment analysis
+npm run test:api -- --endpoint insights
+```
 
-See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment instructions.
+### Load Testing
+```bash
+# Run load test with 100 requests
+npm run test:load -- --requests 100 --concurrency 10
+```
 
-## 🏛️ Architecture Details
+## 📚 Documentation
 
-See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for comprehensive architecture documentation.
-
-## 🎬 Demo Script
-
-See [DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for a complete 3-minute demo walkthrough.
+- **[Deployment Guide](docs/DEPLOYMENT.md)** - Step-by-step deployment instructions
+- **[Architecture Overview](docs/ARCHITECTURE.md)** - Detailed system architecture
+- **[CI/CD Setup](docs/CI-CD.md)** - GitHub Actions workflow documentation
+- **[OIDC Setup](docs/OIDC-SETUP.md)** - GitHub OIDC authentication setup
+- **[Demo Script](docs/DEMO_SCRIPT.md)** - 3-minute demo walkthrough
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## 📄 License
 
-This project is licensed under the **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)** license.
+This project is licensed under the **Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0)**.
 
-### What This Means
+### 📋 License Summary
 
-- ✅ **You are free to:**
-  - Share — copy and redistribute the material in any medium or format
-  - Adapt — remix, transform, and build upon the material
+**✅ Allowed for Non-Commercial Use:**
+- Educational and research purposes
+- Personal projects and learning
+- Non-profit organizations
+- Sharing and adaptation with attribution
 
-- ❌ **Under the following terms:**
-  - **Attribution** — You must give appropriate credit, provide a link to the license, and indicate if changes were made
-  - **NonCommercial** — You may not use the material for commercial purposes
-  - **ShareAlike** — If you remix, transform, or build upon the material, you must distribute your contributions under the same license as the original
+**❌ Not Allowed for Commercial Use:**
+- Any commercial software development
+- For-profit business applications
+- Commercial services or products
+- Monetized deployments
 
-For full license details, see the [LICENSE](LICENSE) file.
+### 📝 Attribution Requirements
 
-## 🆘 Support
+When using this software for non-commercial purposes, provide attribution:
 
-- **Documentation**: [docs/](docs/)
-- **Issues**: GitHub Issues
-- **Discussions**: GitHub Discussions
-- **Email**: support@insightmodai.com
+```
+InsightModAI Agent - AI-Powered Customer Insights Analysis
+Copyright (c) 2024 InsightModAI
+Licensed under CC BY-NC 4.0 (https://creativecommons.org/licenses/by-nc/4.0/)
+```
 
-## 🔄 Updates
+### 💼 Commercial Licensing
 
-### Version 1.0.0
-- Initial release with AgentCore Runtime integration
-- Complete serverless architecture
-- React admin dashboard
-- CRM integration framework
-- Comprehensive monitoring
+For commercial use, please contact:
+- **Email**: licensing@insightmodai.com
+- **Purpose**: Commercial licensing inquiries
 
 ---
 
-**Built with ❤️ using AWS Serverless services**
+**Full license text:** See the [LICENSE](LICENSE) file for complete terms and conditions.
+
+**License URL:** https://creativecommons.org/licenses/by-nc/4.0/
+
+## 🙏 Acknowledgments
+
+- **Amazon Bedrock** for providing state-of-the-art AI capabilities
+- **Strands Framework** for simplifying agent development
+- **AWS Serverless** for enabling cost-effective cloud solutions
+- **React Community** for the beautiful UI components
+
+## 📞 Support
+
+For questions or issues:
+- Create an issue in the GitHub repository
+- Contact the development team at support@insightmodai.com
+
+---
+
+**Built with ❤️ using AWS Serverless and AI technologies**

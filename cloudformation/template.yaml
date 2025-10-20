@@ -169,6 +169,7 @@ Resources:
       Handler: feedback_ingestion.lambda_handler
       Code:
         S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub 'lambda/feedback-ingestion-${EnvironmentName}.zip'
       Timeout: 30
       MemorySize: 256
       Environment:

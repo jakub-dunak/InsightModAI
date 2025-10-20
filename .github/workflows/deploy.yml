@@ -51,6 +51,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role
           aws-region: us-west-2
+          audience: sts.amazonaws.com
 
       - name: Validate CloudFormation template
         id: validate
@@ -307,8 +308,9 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
 
       - name: Upload Lambda code to S3
         run: |
@@ -317,8 +319,23 @@ jobs:
           # Create S3 bucket
           aws s3 mb "s3://${{ env.LAMBDA_CODE_BUCKET }}" --region ${{ env.AWS_REGION }}
 
+          # List contents before upload
+          echo "📦 Lambda packages to upload:"
+          ls -la lambda-packages/
+
           # Upload Lambda packages
           aws s3 cp lambda-packages/ "s3://${{ env.LAMBDA_CODE_BUCKET }}/lambda/" --recursive --region ${{ env.AWS_REGION }}
+
+          # Verify upload
+          echo "🔍 Verifying upload:"
+          UPLOADED_FILES=$(aws s3 ls "s3://${{ env.LAMBDA_CODE_BUCKET }}/lambda/" --region ${{ env.AWS_REGION }} | wc -l)
+          echo "Found $UPLOADED_FILES files in S3"
+
+          if [ "$UPLOADED_FILES" -lt 4 ]; then
+            echo "❌ Not all Lambda packages were uploaded to S3"
+            aws s3 ls "s3://${{ env.LAMBDA_CODE_BUCKET }}/lambda/" --region ${{ env.AWS_REGION }}
+            exit 1
+          fi
 
           echo "✅ Lambda code uploaded to s3://${{ env.LAMBDA_CODE_BUCKET }}"
 
@@ -578,6 +595,7 @@ jobs:
         with:
           role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ steps.cleanup-config.outputs.AWS_REGION_VAL }}
+          audience: sts.amazonaws.com
 
       - name: Delete failed stack
         run: |
@@ -634,6 +652,7 @@ jobs:
         with:
           role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ steps.destroy-config.outputs.AWS_REGION_VAL }}
+          audience: sts.amazonaws.com
 
       - name: Delete CloudFormation stack
         run: |

@@ -145,11 +145,11 @@ jobs:
       - name: Build agent container
         run: |
           cd agent
-          docker build -t globalinvoiceai-agent:latest .
+          docker build -t insightmodai-agent:latest .
 
       - name: Save container image
         run: |
-          docker save globalinvoiceai-agent:latest | gzip > agent-container.tar.gz
+          docker save insightmodai-agent:latest | gzip > agent-container.tar.gz
 
       - name: Upload agent container
         uses: actions/upload-artifact@v4
@@ -180,7 +180,7 @@ jobs:
       - name: Setup S3 bucket for deployment artifacts
         run: |
           ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
-          BUCKET_NAME="globalinvoiceai-deployment-us-west-2-${ENVIRONMENT}"
+          BUCKET_NAME="insightmodai-deployment-us-west-2-${ENVIRONMENT}"
           echo "DEPLOYMENT_BUCKET=${BUCKET_NAME}" >> $GITHUB_ENV
 
           # Check if bucket exists
@@ -242,7 +242,36 @@ jobs:
         run: |
           echo "🚀 Deploying CloudFormation stack..."
           ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
-          STACK_NAME="globalinvoiceai-agent-${ENVIRONMENT}"
+          STACK_NAME="insightmodai-agent-${ENVIRONMENT}"
+
+          # Generate unique Cognito domain
+          BASE_DOMAIN="insightmodai-${ENVIRONMENT}"
+          COGNITO_DOMAIN="${BASE_DOMAIN}"
+          ATTEMPTS=0
+          MAX_ATTEMPTS=10
+
+          while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+            echo "🔍 Checking if Cognito domain '$COGNITO_DOMAIN' is available..."
+            
+            if aws cognito-idp describe-user-pool-domain \
+                --domain "$COGNITO_DOMAIN" \
+                --region us-west-2 >/dev/null 2>&1; then
+              echo "❌ Domain '$COGNITO_DOMAIN' already exists, trying variation..."
+              SUFFIX=$(openssl rand -hex 2)
+              COGNITO_DOMAIN="${BASE_DOMAIN}-${SUFFIX}"
+              ATTEMPTS=$((ATTEMPTS + 1))
+            else
+              echo "✅ Domain '$COGNITO_DOMAIN' is available!"
+              break
+            fi
+          done
+
+          if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then
+            echo "❌ Could not find available Cognito domain after $MAX_ATTEMPTS attempts"
+            exit 1
+          fi
+
+          echo "🎯 Using Cognito domain: $COGNITO_DOMAIN"
 
           # Check if stack exists
           if aws cloudformation describe-stacks --stack-name $STACK_NAME --region us-west-2 >/dev/null 2>&1; then
@@ -261,8 +290,9 @@ jobs:
             --template-body file://packaged-template.yaml \
             --parameters \
               ParameterKey=EnvironmentName,ParameterValue="${ENVIRONMENT}" \
-              ParameterKey=AdminEmail,ParameterValue="admin@globalinvoiceai.com" \
+              ParameterKey=AdminEmail,ParameterValue="admin@insightmodai.com" \
               ParameterKey=BedrockModelId,ParameterValue="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
+              ParameterKey=CognitoDomainName,ParameterValue="${COGNITO_DOMAIN}" \
               ParameterKey=LambdaCodeBucket,ParameterValue="${{ env.DEPLOYMENT_BUCKET }}" \
             --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
             --region us-west-2
@@ -354,7 +384,7 @@ jobs:
             echo "STACK_NAME=$STACK_NAME" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=$AWS_REGION" >> $GITHUB_OUTPUT
           else
-            echo "STACK_NAME=globalinvoiceai-agent-$ENV" >> $GITHUB_OUTPUT
+            echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
           fi
 
@@ -415,7 +445,7 @@ jobs:
             echo "STACK_NAME=$STACK_NAME" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=$AWS_REGION" >> $GITHUB_OUTPUT
           else
-            echo "STACK_NAME=globalinvoiceai-agent-$ENV" >> $GITHUB_OUTPUT
+            echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
           fi
 

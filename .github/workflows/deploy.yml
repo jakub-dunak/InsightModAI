@@ -258,7 +258,7 @@ jobs:
           # Deploy the stack
           aws cloudformation $OPERATION \
             --stack-name $STACK_NAME \
-            --template-file packaged-template.yaml \
+            --template-body file://packaged-template.yaml \
             --parameters \
               ParameterKey=EnvironmentName,ParameterValue="${ENVIRONMENT}" \
               ParameterKey=AdminEmail,ParameterValue="admin@globalinvoiceai.com" \

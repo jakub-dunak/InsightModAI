@@ -295,6 +295,8 @@ jobs:
                   --domain "$COGNITO_DOMAIN" \
                   --region us-west-2 2>&1)
               
+              echo "📋 AWS Response: $DOMAIN_CHECK"
+              
               # Check the result
               if echo "$DOMAIN_CHECK" | grep -q "ResourceNotFoundException\|InvalidParameterException"; then
                 echo "✅ Domain '$COGNITO_DOMAIN' is available!"
@@ -303,8 +305,8 @@ jobs:
               elif echo "$DOMAIN_CHECK" | grep -q "DomainDescription"; then
                 echo "❌ Domain already exists, trying another..."
               else
-                echo "⚠️ Unexpected response, assuming available"
-                echo "Response: $DOMAIN_CHECK"
+                echo "⚠️ Unexpected response, assuming available and proceeding"
+                echo "Full response: $DOMAIN_CHECK"
                 FOUND=true
                 break
               fi

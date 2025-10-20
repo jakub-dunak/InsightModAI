@@ -783,24 +783,21 @@ Resources:
     Type: AWS::Amplify::App
     Properties:
       Name: !Sub '${AWS::StackName}-dashboard-${EnvironmentName}'
-      Repository: !Sub 'https://github.com/${AWS::AccountId}/InsightModAI'
+      Platform: WEB
       BuildSpec: |
         version: 1
         frontend:
           phases:
             preBuild:
               commands:
-                - npm ci
+                - echo "Build handled by GitHub Actions CI/CD"
             build:
               commands:
-                - npm run build
+                - echo "Deployment package provided by CI/CD"
           artifacts:
-            baseDirectory: build
+            baseDirectory: dist
             files:
               - '**/*'
-          cache:
-            paths:
-              - node_modules/**/*
       EnvironmentVariables:
         - Name: REACT_APP_API_ENDPOINT
           Value: !Sub 'https://${InsightModAIApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}'
@@ -950,6 +947,12 @@ Outputs:
     Value: !Sub 'https://${InsightModAIApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}'
     Export:
       Name: !Sub '${AWS::StackName}-api-endpoint-${EnvironmentName}'
+
+  AmplifyAppId:
+    Description: 'Amplify App ID'
+    Value: !Ref AmplifyApp
+    Export:
+      Name: !Sub '${AWS::StackName}-amplify-app-id-${EnvironmentName}'
 
   AmplifyAppURL:
     Description: 'Amplify dashboard URL'

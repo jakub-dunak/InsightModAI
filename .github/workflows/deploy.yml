@@ -441,6 +441,49 @@ jobs:
 
           echo "✅ Deployment tests passed!"
 
+      - name: Deploy frontend to Amplify
+        run: |
+          echo "🚀 Deploying frontend to Amplify..."
+
+          # Get Amplify app and branch information from CloudFormation outputs
+          AMPLIFY_APP_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`AmplifyAppId`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          if [ -z "$AMPLIFY_APP_ID" ]; then
+            echo "❌ Failed to get Amplify App ID from CloudFormation"
+            exit 1
+          fi
+
+          echo "📱 Amplify App ID: $AMPLIFY_APP_ID"
+
+          # Create a ZIP file of the frontend build
+          cd frontend-build
+          zip -r ../frontend-build.zip .
+          cd ..
+
+          # Upload frontend build to S3
+          aws s3 cp frontend-build.zip "s3://${{ env.LAMBDA_CODE_BUCKET }}/frontend-build.zip" \
+            --region ${{ env.AWS_REGION }}
+
+          # Start Amplify deployment
+          DEPLOYMENT_JOB_ID=$(aws amplify start-deployment \
+            --app-id "$AMPLIFY_APP_ID" \
+            --branch-name main \
+            --source-url "s3://${{ env.LAMBDA_CODE_BUCKET }}/frontend-build.zip" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'jobId' \
+            --output text)
+
+          if [ -z "$DEPLOYMENT_JOB_ID" ]; then
+            echo "❌ Failed to start Amplify deployment"
+            exit 1
+          fi
+
+          echo "✅ Amplify deployment started with job ID: $DEPLOYMENT_JOB_ID"
+
       - name: Create deployment summary
         run: |
           cat > deployment-summary.md << EOF

@@ -50,7 +50,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
           role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: us-east-1
 
       - name: Validate CloudFormation template
         id: validate
@@ -58,7 +58,7 @@ jobs:
           echo "Validating CloudFormation template..."
           if aws cloudformation validate-template \
             --template-body file://cloudformation/template.yaml \
-            --region ${{ env.AWS_REGION }}; then
+            --region us-east-1; then
             echo "valid=true" >> $GITHUB_OUTPUT
             echo "✅ CloudFormation template is valid"
           else
@@ -169,12 +169,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5.0.0
-        with:
-          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Download frontend build
         uses: actions/download-artifact@v4
         with:
@@ -280,6 +274,12 @@ jobs:
           echo "AWS_REGION=${{ steps.config.outputs.AWS_REGION_VAL }}" >> $GITHUB_ENV
           echo "AWS_ROLE_TO_ASSUME=${{ steps.config.outputs.AWS_ROLE_ARN }}" >> $GITHUB_ENV
           echo "COGNITO_DOMAIN_NAME=${{ steps.generate-domain.outputs.COGNITO_DOMAIN }}" >> $GITHUB_ENV
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5.0.0
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Check if stack exists
         id: stack-exists
@@ -471,12 +471,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5.0.0
-        with:
-          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Load environment configuration for cleanup
         id: cleanup-config
         run: |
@@ -492,6 +486,12 @@ jobs:
             echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=us-east-1" >> $GITHUB_OUTPUT
           fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5.0.0
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ steps.cleanup-config.outputs.AWS_REGION_VAL }}
 
       - name: Delete failed stack
         run: |
@@ -527,12 +527,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5.0.0
-        with:
-          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Load environment configuration for destroy
         id: destroy-config
         run: |
@@ -548,6 +542,12 @@ jobs:
             echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=us-east-1" >> $GITHUB_OUTPUT
           fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5.0.0
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ steps.destroy-config.outputs.AWS_REGION_VAL }}
 
       - name: Delete CloudFormation stack
         run: |

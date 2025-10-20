@@ -309,7 +309,7 @@ jobs:
                 ParameterKey=EnvironmentName,ParameterValue="${{ github.event.inputs.environment || 'prod' }}" \
                 ParameterKey=EnableCRM,ParameterValue="${{ github.event.inputs.environment == 'dev' && 'false' || 'true' }}" \
                 ParameterKey=CognitoDomainName,ParameterValue="${{ env.COGNITO_DOMAIN_NAME }}" \
-              --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+              --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
               --region ${{ env.AWS_REGION }}
           else
             echo "Creating new stack..."
@@ -322,7 +322,7 @@ jobs:
                 ParameterKey=EnvironmentName,ParameterValue="${{ github.event.inputs.environment || 'prod' }}" \
                 ParameterKey=EnableCRM,ParameterValue="${{ github.event.inputs.environment == 'dev' && 'false' || 'true' }}" \
                 ParameterKey=CognitoDomainName,ParameterValue="${{ env.COGNITO_DOMAIN_NAME }}" \
-              --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+              --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
               --region ${{ env.AWS_REGION }}
           fi
 

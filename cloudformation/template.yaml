@@ -81,11 +81,6 @@ Resources:
               - StorageClass: INTELLIGENT_TIERING
                 TransitionInDays: 30
 
-  AmplifySourceBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${AWS::StackName}-amplify-source-${EnvironmentName}'
-
   # =============================================================================
   # DYNAMODB TABLES
   # =============================================================================
@@ -432,9 +427,6 @@ Resources:
             ]
           }
 
-  # =============================================================================
-  # CODEBUILD PROJECT FOR AGENT CONTAINER BUILD
-  # =============================================================================
 
   # =============================================================================
   # API GATEWAY

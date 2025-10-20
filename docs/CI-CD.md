@@ -99,7 +99,7 @@ aws cloudformation create-stack \
     ParameterKey=EnvironmentName,ParameterValue=prod \
     ParameterKey=EnableCRM,ParameterValue=false \
   --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
-  --region us-east-1
+  --region us-west-2
 ```
 
 #### Update Existing Stack
@@ -113,18 +113,18 @@ aws cloudformation update-stack \
     ParameterKey=EnvironmentName,ParameterValue=prod \
     ParameterKey=EnableCRM,ParameterValue=true \
   --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
-  --region us-east-1
+  --region us-west-2
 ```
 
 #### Delete Stack
 ```bash
 aws cloudformation delete-stack \
   --stack-name insightmodai-agent-prod \
-  --region us-east-1
+  --region us-west-2
 
 aws cloudformation wait stack-delete-complete \
   --stack-name insightmodai-agent-prod \
-  --region us-east-1
+  --region us-west-2
 ```
 
 ## Required GitHub Secrets
@@ -266,7 +266,7 @@ aws cloudformation describe-stack-events \
 #### Test API Endpoints
 ```bash
 # Test API Gateway
-curl -I https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/prod/feedback
+curl -I https://YOUR_API_ID.execute-api.us-west-2.amazonaws.com/prod/feedback
 
 # Test agent health
 curl http://localhost:8080/ping  # If running locally

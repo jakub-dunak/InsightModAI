@@ -50,7 +50,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role
-          aws-region: us-east-1
+          aws-region: us-west-2
 
       - name: Validate CloudFormation template
         id: validate
@@ -58,7 +58,7 @@ jobs:
           echo "Validating CloudFormation template..."
           if aws cloudformation validate-template \
             --template-body file://cloudformation/template.yaml \
-            --region us-east-1; then
+            --region us-west-2; then
             echo "valid=true" >> $GITHUB_OUTPUT
             echo "✅ CloudFormation template is valid"
           else
@@ -213,7 +213,7 @@ jobs:
             echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
             echo "ADMIN_EMAIL=admin@yourcompany.com" >> $GITHUB_OUTPUT
             echo "BEDROCK_MODEL=us.anthropic.claude-3-5-sonnet-20241022-v2:0" >> $GITHUB_OUTPUT
-            echo "AWS_REGION_VAL=us-east-1" >> $GITHUB_OUTPUT
+            echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
             echo "AWS_ROLE_ARN=arn:aws:iam::123456789012:role/personal-github-oidc-role" >> $GITHUB_OUTPUT
           fi
 
@@ -484,7 +484,7 @@ jobs:
             echo "AWS_REGION_VAL=$AWS_REGION" >> $GITHUB_OUTPUT
           else
             echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
-            echo "AWS_REGION_VAL=us-east-1" >> $GITHUB_OUTPUT
+            echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
           fi
 
       - name: Configure AWS credentials
@@ -540,7 +540,7 @@ jobs:
             echo "AWS_REGION_VAL=$AWS_REGION" >> $GITHUB_OUTPUT
           else
             echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
-            echo "AWS_REGION_VAL=us-east-1" >> $GITHUB_OUTPUT
+            echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
           fi
 
       - name: Configure AWS credentials

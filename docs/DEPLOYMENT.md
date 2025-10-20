@@ -18,7 +18,7 @@ This guide provides step-by-step instructions for deploying the InsightModAI Age
 - **AWS Account** with administrator access
 - **IAM permissions** for CloudFormation, Lambda, DynamoDB, S3, API Gateway, Cognito, Amplify, ECR, CodeBuild
 - **Bedrock access** - Ensure your AWS account has access to Amazon Bedrock in your region
-- **Region support** - Bedrock AgentCore Runtime is available in select regions (us-east-1, us-west-2, eu-west-1)
+- **Region support** - Bedrock AgentCore Runtime is available in select regions (us-west-2, us-west-2, eu-west-1)
 
 ### Environment Setup
 
@@ -31,7 +31,7 @@ This guide provides step-by-step instructions for deploying the InsightModAI Age
 2. **Verify Bedrock Access**
    ```bash
    # Check if Bedrock is available in your region
-   aws bedrock list-foundation-models --region us-east-1
+   aws bedrock list-foundation-models --region us-west-2
    ```
 
 3. **Clone Repository**
@@ -57,7 +57,7 @@ aws cloudformation create-stack \
     ParameterKey=EnvironmentName,ParameterValue=prod \
     ParameterKey=EnableCRM,ParameterValue=false \
   --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
-  --region us-east-1
+  --region us-west-2
 ```
 
 **Parameter Explanations:**
@@ -139,7 +139,7 @@ aws cognito-idp admin-create-user \
     Name=email_verified,Value=true \
   --temporary-password TempPass123! \
   --message-action SUPPRESS \
-  --region us-east-1
+  --region us-west-2
 ```
 
 ### Step 5: Set Permanent Password
@@ -289,7 +289,7 @@ To remove the entire deployment:
 # Delete CloudFormation stack (this removes all resources)
 aws cloudformation delete-stack \
   --stack-name insightmodai-agent \
-  --region us-east-1
+  --region us-west-2
 
 # Monitor deletion progress
 aws cloudformation describe-stacks \

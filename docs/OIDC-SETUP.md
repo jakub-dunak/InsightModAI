@@ -121,12 +121,12 @@ The workflow is already configured to read the role ARN from `.github/environmen
 ```yaml
 # In .github/environments/prod.yml
 aws:
-  region: us-east-1
+  region: us-west-2
   role_arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/personal-github-oidc-role
 
 # In .github/environments/dev.yml
 aws:
-  region: us-east-1
+  region: us-west-2
   role_arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/personal-github-oidc-role
 ```
 

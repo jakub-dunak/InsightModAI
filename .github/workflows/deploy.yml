@@ -292,29 +292,35 @@ jobs:
 
           echo "✅ Lambda functions packaged successfully"
 
-      - name: Upload Lambda code to S3
+      - name: Prepare Lambda deployment
         run: |
-          echo "📤 Uploading Lambda code to S3..."
+          echo "📦 Preparing Lambda deployment..."
 
           # Create a unique bucket name for Lambda code
           BUCKET_NAME="insightmodai-lambda-code-${{ github.run_id }}-${{ github.run_attempt }}"
 
-          # Create S3 bucket
-          aws s3 mb "s3://${BUCKET_NAME}" --region ${{ env.AWS_REGION }}
-
-          # Upload Lambda packages
-          aws s3 cp lambda-packages/ "s3://${BUCKET_NAME}/lambda/" --recursive --region ${{ env.AWS_REGION }}
-
           # Set bucket name as output for CloudFormation
           echo "LAMBDA_CODE_BUCKET=${BUCKET_NAME}" >> $GITHUB_ENV
 
-          echo "✅ Lambda code uploaded to s3://${BUCKET_NAME}"
+          echo "✅ Lambda deployment prepared with bucket: ${BUCKET_NAME}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload Lambda code to S3
+        run: |
+          echo "📤 Uploading Lambda code to S3..."
+
+          # Create S3 bucket
+          aws s3 mb "s3://${{ env.LAMBDA_CODE_BUCKET }}" --region ${{ env.AWS_REGION }}
+
+          # Upload Lambda packages
+          aws s3 cp lambda-packages/ "s3://${{ env.LAMBDA_CODE_BUCKET }}/lambda/" --recursive --region ${{ env.AWS_REGION }}
+
+          echo "✅ Lambda code uploaded to s3://${{ env.LAMBDA_CODE_BUCKET }}"
 
       - name: Check if stack exists
         id: stack-exists

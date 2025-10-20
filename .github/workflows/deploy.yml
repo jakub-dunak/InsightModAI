@@ -273,7 +273,7 @@ jobs:
           echo "ADMIN_EMAIL=${{ steps.config.outputs.ADMIN_EMAIL }}" >> $GITHUB_ENV
           echo "BEDROCK_MODEL_ID=${{ steps.config.outputs.BEDROCK_MODEL }}" >> $GITHUB_ENV
           echo "AWS_REGION=${{ steps.config.outputs.AWS_REGION_VAL }}" >> $GITHUB_ENV
-          echo "AWS_ROLE_TO_ASSUME=${{ steps.config.outputs.AWS_ROLE_ARN }}" >> $GITHUB_ENV
+          echo "AWS_ROLE_TO_ASSUME=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role" >> $GITHUB_ENV
           echo "COGNITO_DOMAIN_NAME=${{ steps.generate-domain.outputs.COGNITO_DOMAIN }}" >> $GITHUB_ENV
 
       - name: Package Lambda functions
@@ -590,6 +590,10 @@ jobs:
             echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
           fi
 
+      - name: Set cleanup variables
+        run: |
+          echo "AWS_ROLE_TO_ASSUME=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role" >> $GITHUB_ENV
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
@@ -646,6 +650,10 @@ jobs:
             echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
           fi
+
+      - name: Set destroy variables
+        run: |
+          echo "AWS_ROLE_TO_ASSUME=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role" >> $GITHUB_ENV
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5.0.0

@@ -244,7 +244,7 @@ jobs:
           ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
           STACK_NAME="insightmodai-agent-${ENVIRONMENT}"
 
-*          # Check if stack exists and get existing Cognito domain if available
+          # Check if stack exists and get existing Cognito domain if available
           if aws cloudformation describe-stacks --stack-name $STACK_NAME --region us-west-2 >/dev/null 2>&1; then
             echo "📝 Stack $STACK_NAME exists, retrieving existing Cognito domain..."
             

@@ -13,11 +13,9 @@ import {
 import {
   TrendingUp,
   TrendingDown,
-  Analytics,
   Storage,
   Speed,
   Memory,
-  Warning,
   CheckCircle,
 } from '@mui/icons-material';
 import { useAPI } from '../services/api';
@@ -29,24 +27,24 @@ const Dashboard = () => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    const fetchDashboardData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // Fetch dashboard metrics from API
+        const response = await api.get('/insights?summary=true');
+        setDashboardData(response.data);
+      } catch (err) {
+        console.error('Error fetching dashboard data:', err);
+        setError('Failed to load dashboard data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchDashboardData();
-  }, []);
-
-  const fetchDashboardData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      // Fetch dashboard metrics from API
-      const response = await api.get('/insights?summary=true');
-      setDashboardData(response.data);
-    } catch (err) {
-      console.error('Error fetching dashboard data:', err);
-      setError('Failed to load dashboard data');
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [api]);
 
   if (loading) {
     return (

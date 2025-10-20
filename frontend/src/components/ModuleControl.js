@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -9,8 +9,6 @@ import {
   TextField,
   Button,
   Grid,
-  Alert,
-  Divider,
 } from '@mui/material';
 import { useAPI } from '../services/api';
 
@@ -20,11 +18,7 @@ const ModuleControl = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchConfig();
-  }, []);
-
-  const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
     try {
       setLoading(true);
       // Fetch current configuration from API
@@ -35,7 +29,11 @@ const ModuleControl = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [api]);
+
+  useEffect(() => {
+    fetchConfig();
+  }, [fetchConfig]);
 
   const handleConfigChange = (key, value) => {
     setConfig(prev => ({

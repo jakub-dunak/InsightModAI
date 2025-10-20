@@ -98,9 +98,15 @@ aws cloudformation describe-stack-events \
 - Bedrock access - Verify Bedrock is enabled in your account and region
 - Resource limits - Check if you've hit any AWS service limits
 
-### Step 3: Retrieve Stack Outputs
+### Step 3: Domain Generation & Deployment
 
-Get the deployed resource URLs and IDs:
+The deployment process will automatically:
+
+1. **Generate a unique Cognito domain** by checking AWS for available domains based on your stack name
+2. **Deploy all infrastructure** using the generated domain
+3. **Create Cognito authentication** with the unique domain
+
+Once deployment completes, retrieve the resource URLs and IDs:
 
 ```bash
 aws cloudformation describe-stacks \
@@ -113,6 +119,7 @@ aws cloudformation describe-stacks \
 - `ApiEndpoint`: API Gateway URL for submitting feedback
 - `AmplifyAppURL`: React dashboard URL
 - `UserPoolId`: Cognito User Pool ID
+- `CognitoDomain`: Auto-generated unique Cognito hosted UI domain for authentication
 - `ECRRepositoryUri`: Container registry for agent images
 
 ### Step 4: Create Admin User

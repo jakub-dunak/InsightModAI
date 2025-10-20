@@ -11,7 +11,6 @@ import os
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
-from decimal import Decimal
 
 # Strands imports
 from strands import Agent, tool
@@ -69,7 +68,7 @@ def analyze_sentiment(feedback_text: str) -> Dict[str, Any]:
 
         # Use Bedrock model for sentiment analysis
         try:
-            response = bedrock_model(prompt)
+            response = bedrock_model.invoke(prompt)
 
             # In a real implementation, parse the JSON response properly
             # For this example, return a structured response
@@ -90,8 +89,15 @@ def analyze_sentiment(feedback_text: str) -> Dict[str, Any]:
                 "key_themes": ["error"],
                 "error": str(e)
             }
-
-
+    except Exception as e:
+        print(f"Error in sentiment analysis: {e}")
+        return {
+            "sentiment_score": 0.5,
+            "sentiment_label": "neutral",
+            "confidence": 0.0,
+            "key_themes": ["error"],
+            "error": str(e)
+        }
 
 @tool
 def store_feedback(feedback_data: Dict[str, Any]) -> str:

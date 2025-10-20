@@ -6,7 +6,7 @@ name: Production Environment
 # AWS Configuration
 aws:
   region: us-east-1
-  role_arn: arn:aws:iam::123456789012:role/InsightModAI-GitHubActionsRole-Prod
+  role_arn: arn:aws:iam::YOUR_AWS_ACCOUNT_ID:role/personal-github-oidc-role
 
 # Environment Settings
 environment:

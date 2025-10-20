@@ -15,7 +15,7 @@ on:
       environment:
         description: 'Deployment environment'
         required: true
-        default: 'prod'
+        default: 'dev'
         type: choice
         options:
           - dev
@@ -220,8 +220,57 @@ jobs:
             echo "ADMIN_EMAIL=admin@yourcompany.com" >> $GITHUB_OUTPUT
             echo "BEDROCK_MODEL=us.anthropic.claude-3-5-sonnet-20241022-v2:0" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=us-east-1" >> $GITHUB_OUTPUT
-            echo "AWS_ROLE_ARN=arn:aws:iam::123456789012:role/GitHubActionsRole" >> $GITHUB_OUTPUT
+            echo "AWS_ROLE_ARN=arn:aws:iam::123456789012:role/personal-github-oidc-role" >> $GITHUB_OUTPUT
           fi
+
+      - name: Generate unique Cognito domain
+        id: generate-domain
+        run: |
+          echo "🔍 Generating unique Cognito domain..."
+
+          # Get base domain from stack name
+          BASE_DOMAIN="${{ steps.config.outputs.STACK_NAME }}"
+          BASE_DOMAIN=$(echo "$BASE_DOMAIN" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | sed 's/^-\|-$//g')
+
+          # Ensure minimum length
+          if [ ${#BASE_DOMAIN} -lt 3 ]; then
+            BASE_DOMAIN="insightmodai-${{ github.event.inputs.environment }}"
+          fi
+
+          # Truncate if too long (leave room for suffix)
+          if [ ${#BASE_DOMAIN} -gt 55 ]; then
+            BASE_DOMAIN="${BASE_DOMAIN:0:55}"
+            BASE_DOMAIN=$(echo "$BASE_DOMAIN" | sed 's/-$//')
+          fi
+
+          DOMAIN_TO_USE="$BASE_DOMAIN"
+          ATTEMPTS=0
+          MAX_ATTEMPTS=10
+
+          while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+            echo "Checking if domain '$DOMAIN_TO_USE' is available..."
+
+            # Check if domain exists using AWS CLI
+            if aws cognito-idp describe-user-pool-domain \
+                --domain "$DOMAIN_TO_USE" \
+                --region ${{ steps.config.outputs.AWS_REGION_VAL }} >/dev/null 2>&1; then
+              echo "❌ Domain '$DOMAIN_TO_USE' already exists, trying variation..."
+              SUFFIX=$(openssl rand -hex 2 | cut -c1-4)
+              DOMAIN_TO_USE="${BASE_DOMAIN}-${SUFFIX}"
+              ATTEMPTS=$((ATTEMPTS + 1))
+            else
+              echo "✅ Domain '$DOMAIN_TO_USE' is available!"
+              break
+            fi
+          done
+
+          if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then
+            echo "❌ Could not find available domain after $MAX_ATTEMPTS attempts"
+            exit 1
+          fi
+
+          echo "COGNITO_DOMAIN=$DOMAIN_TO_USE" >> $GITHUB_OUTPUT
+          echo "🎯 Using Cognito domain: $DOMAIN_TO_USE"
 
       - name: Set deployment variables
         run: |
@@ -230,6 +279,7 @@ jobs:
           echo "BEDROCK_MODEL_ID=${{ steps.config.outputs.BEDROCK_MODEL }}" >> $GITHUB_ENV
           echo "AWS_REGION=${{ steps.config.outputs.AWS_REGION_VAL }}" >> $GITHUB_ENV
           echo "AWS_ROLE_TO_ASSUME=${{ steps.config.outputs.AWS_ROLE_ARN }}" >> $GITHUB_ENV
+          echo "COGNITO_DOMAIN_NAME=${{ steps.generate-domain.outputs.COGNITO_DOMAIN }}" >> $GITHUB_ENV
 
       - name: Check if stack exists
         id: stack-exists
@@ -258,6 +308,7 @@ jobs:
                 ParameterKey=BedrockModelId,ParameterValue="${{ env.BEDROCK_MODEL_ID }}" \
                 ParameterKey=EnvironmentName,ParameterValue="${{ github.event.inputs.environment || 'prod' }}" \
                 ParameterKey=EnableCRM,ParameterValue="${{ github.event.inputs.environment == 'dev' && 'false' || 'true' }}" \
+                ParameterKey=CognitoDomainName,ParameterValue="${{ env.COGNITO_DOMAIN_NAME }}" \
               --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
               --region ${{ env.AWS_REGION }}
           else
@@ -270,6 +321,7 @@ jobs:
                 ParameterKey=BedrockModelId,ParameterValue="${{ env.BEDROCK_MODEL_ID }}" \
                 ParameterKey=EnvironmentName,ParameterValue="${{ github.event.inputs.environment || 'prod' }}" \
                 ParameterKey=EnableCRM,ParameterValue="${{ github.event.inputs.environment == 'dev' && 'false' || 'true' }}" \
+                ParameterKey=CognitoDomainName,ParameterValue="${{ env.COGNITO_DOMAIN_NAME }}" \
               --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
               --region ${{ env.AWS_REGION }}
           fi

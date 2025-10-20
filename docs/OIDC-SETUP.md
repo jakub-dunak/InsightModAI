@@ -55,7 +55,7 @@ Create the IAM role:
 
 ```bash
 aws iam create-role \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --assume-role-policy-document file://trust-policy.json \
     --description "Role for GitHub Actions OIDC authentication"
 ```
@@ -66,78 +66,68 @@ Attach the necessary permissions for CloudFormation deployment:
 
 ```bash
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/CloudWatchFullAccess
 
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
 
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
 
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
 
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/AWSLambda_FullAccess
 
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/IAMFullAccess
 
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/AmazonAPIGatewayAdministrator
 
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/AmazonCognitoPowerUser
 
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/AWSCodeBuildAdminAccess
 
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/AmazonBedrockFullAccess
 
 aws iam attach-role-policy \
-    --role-name InsightModAI-GitHubActionsRole-Prod \
+    --role-name personal-github-oidc-role \
     --policy-arn arn:aws:iam::aws:policy/AWSAmplifyAdminAccess
 ```
 
-## Step 4: Create Development Role (Optional)
+## Step 4: Role Configuration Complete
 
-For development deployments, create a separate role with more restricted permissions:
-
-```bash
-# Create trust policy for dev environment
-aws iam create-role \
-    --role-name InsightModAI-GitHubActionsRole-Dev \
-    --assume-role-policy-document file://trust-policy-dev.json \
-    --description "Role for GitHub Actions OIDC authentication (Dev)"
-```
-
-Attach appropriate policies for development (same as production but potentially with fewer permissions).
+The `personal-github-oidc-role` will be used for both development and production deployments. The trust policy allows access from your GitHub repository for both environments.
 
 ## Step 5: Update Environment Configuration
 
-The workflow is already configured to read the role ARN from `.github/environments/*.yml` files. Update these files with your actual AWS account ID and role names:
+The workflow is already configured to read the role ARN from `.github/environments/*.yml` files. Update these files with your actual AWS account ID:
 
 ```yaml
 # In .github/environments/prod.yml
 aws:
   region: us-east-1
-  role_arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/InsightModAI-GitHubActionsRole-Prod
+  role_arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/personal-github-oidc-role
 
 # In .github/environments/dev.yml
 aws:
   region: us-east-1
-  role_arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/InsightModAI-GitHubActionsRole-Dev
+  role_arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/personal-github-oidc-role
 ```
 
 ## Step 6: Verify Setup
@@ -168,13 +158,13 @@ aws iam get-open-id-connect-provider --open-id-connect-provider-arn arn:aws:iam:
 
 List roles:
 ```bash
-aws iam list-roles --query 'Roles[?contains(RoleName, `GitHubActions`)].RoleName'
+aws iam list-roles --query 'Roles[?RoleName==`personal-github-oidc-role`].RoleName'
 ```
 
 Test role assumption:
 ```bash
 aws sts assume-role-with-web-identity \
-    --role-arn arn:aws:iam::<ACCOUNT_ID>:role/InsightModAI-GitHubActionsRole-Prod \
+    --role-arn arn:aws:iam::<ACCOUNT_ID>:role/personal-github-oidc-role \
     --role-session-name test-session \
     --web-identity-token <JWT_TOKEN>
 ```

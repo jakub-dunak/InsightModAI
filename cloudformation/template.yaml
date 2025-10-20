@@ -34,6 +34,19 @@ Parameters:
       - 'true'
       - 'false'
 
+  CognitoDomainName:
+    Type: String
+    Description: Unique domain name for Cognito User Pool (auto-generated)
+    MinLength: 3
+    MaxLength: 63
+    AllowedPattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+    ConstraintDescription: Must be lowercase alphanumeric with hyphens, 3-63 characters
+
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda function code
+    Default: ""
+
 Resources:
   # =============================================================================
   # STORAGE RESOURCES
@@ -157,113 +170,9 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-feedback-ingestion-${EnvironmentName}'
       Runtime: python3.11
-      Handler: index.lambda_handler
+      Handler: feedback_ingestion.lambda_handler
       Code:
-        ZipFile: !Sub |
-          import json
-          import boto3
-          import uuid
-          import os
-          from datetime import datetime
-          from botocore.exceptions import ClientError
-
-          def lambda_handler(event, context):
-              """Process S3 object creation events and API Gateway requests for feedback ingestion."""
-              try:
-                  # Handle S3 trigger
-                  if event.get('Records'):
-                      for record in event['Records']:
-                          if record['eventSource'] == 'aws:s3':
-                              bucket = record['s3']['bucket']['name']
-                              key = record['s3']['object']['key']
-                              process_s3_feedback(bucket, key)
-                  # Handle API Gateway request
-                  elif event.get('body'):
-                      body = json.loads(event['body'])
-                      result = process_api_feedback(body)
-                      return {
-                          'statusCode': 200,
-                          'body': json.dumps(result)
-                      }
-
-                  return {'statusCode': 200}
-              except Exception as e:
-                  print(f"Error processing feedback: {e}")
-                  return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
-
-          def process_s3_feedback(bucket, key):
-              """Process feedback uploaded to S3."""
-              s3 = boto3.client('s3')
-              try:
-                  response = s3.get_object(Bucket=bucket, Key=key)
-                  feedback_data = json.loads(response['Body'].read())
-
-                  # Store in DynamoDB
-                  dynamodb = boto3.resource('dynamodb')
-                  table = dynamodb.Table(os.environ['FEEDBACK_TABLE_NAME'])
-
-                  feedback_id = str(uuid.uuid4())
-                  table.put_item(Item={
-                      'feedback_id': feedback_id,
-                      'timestamp': datetime.utcnow().isoformat(),
-                      'source': 's3',
-                      's3_bucket': bucket,
-                      's3_key': key,
-                      **feedback_data
-                  })
-
-                  print(f"Stored feedback {feedback_id} from S3")
-              except Exception as e:
-                  print(f"Error processing S3 feedback: {e}")
-                  raise
-
-          def process_api_feedback(feedback_data):
-              """Process feedback from API Gateway."""
-              # Validate required fields
-              required_fields = ['customer_id', 'feedback_text', 'channel']
-              for field in required_fields:
-                  if field not in feedback_data:
-                      raise ValueError(f"Missing required field: {field}")
-
-              # Store in DynamoDB
-              dynamodb = boto3.resource('dynamodb')
-              table = dynamodb.Table(f'${AWS::StackName}-feedback-records-${EnvironmentName}')
-
-              feedback_id = str(uuid.uuid4())
-              table.put_item(Item={
-                  'feedback_id': feedback_id,
-                  'timestamp': datetime.utcnow().isoformat(),
-                  'source': 'api',
-                  **feedback_data
-              })
-
-              # Optionally trigger agent processing
-              trigger_agent_processing(feedback_id, feedback_data)
-
-              return {'feedback_id': feedback_id, 'status': 'processed'}
-
-          def trigger_agent_processing(feedback_id, feedback_data):
-              """Trigger AgentCore agent processing if enabled."""
-              # Get config from DynamoDB
-              dynamodb = boto3.resource('dynamodb')
-              config_table = dynamodb.Table(os.environ['CONFIG_TABLE_NAME'])
-
-              try:
-                  response = config_table.get_item(Key={'config_key': 'auto_process_feedback'})
-                  if response.get('Item', {}).get('config_value') == 'true':
-                      # Invoke agent processing
-                      lambda_client = boto3.client('lambda')
-                      lambda_client.invoke(
-                          FunctionName=f'${AWS::StackName}-agent-invoker-${EnvironmentName}',
-                          InvocationType='Event',
-                          Payload=json.dumps({
-                              'feedback_id': feedback_id,
-                              'feedback_data': feedback_data
-                          })
-                      )
-              except Exception as e:
-                  print(f"Error triggering agent processing: {e}")
-
+        S3Bucket: !Ref LambdaCodeBucket
       Timeout: 30
       MemorySize: 256
       Environment:
@@ -323,137 +232,10 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-agent-invoker-${EnvironmentName}'
       Runtime: python3.11
-      Handler: index.lambda_handler
+      Handler: agent_invoker.lambda_handler
       Code:
-        ZipFile: !Sub |
-          import json
-          import boto3
-          import uuid
-          import os
-          from botocore.exceptions import ClientError
-
-          def lambda_handler(event, context):
-              """Invoke AgentCore Runtime for feedback processing."""
-              try:
-                  # Extract feedback data
-                  feedback_id = event.get('feedback_id')
-                  feedback_data = event.get('feedback_data', {})
-
-                  if not feedback_id:
-                      return {'statusCode': 400, 'body': json.dumps({'error': 'feedback_id required'})}
-
-                  # Get agent runtime ARN from SSM
-                  ssm = boto3.client('ssm')
-                  try:
-                      response = ssm.get_parameter(Name=f'/insightmodai/agent-runtime-arn-{EnvironmentName}')
-                      agent_runtime_arn = response['Parameter']['Value']
-                  except ssm.exceptions.ParameterNotFound:
-                      return {'statusCode': 503, 'body': json.dumps({'error': 'Agent runtime not deployed'})}
-
-                  # Generate session ID (33+ characters required)
-                  session_id = str(uuid.uuid4()) + str(uuid.uuid4()) + str(uuid.uuid4())
-
-                  # Prepare payload for agent
-                  agent_payload = {
-                      'input': {
-                          'prompt': f'Analyze this customer feedback: {feedback_data.get("feedback_text", "")}',
-                          'feedback_id': feedback_id,
-                          'customer_id': feedback_data.get('customer_id'),
-                          'channel': feedback_data.get('channel'),
-                          'context': {
-                              'previous_sentiments': get_recent_sentiments(feedback_data.get('customer_id'))
-                          }
-                      }
-                  }
-
-                  # Invoke AgentCore Runtime
-                  agentcore_client = boto3.client('bedrock-agentcore')
-                  response = agentcore_client.invoke_agent_runtime(
-                      agentRuntimeArn=agent_runtime_arn,
-                      runtimeSessionId=session_id,
-                      payload=json.dumps(agent_payload),
-                      qualifier='DEFAULT'
-                  )
-
-                  # Process streaming response
-                  if 'text/event-stream' in response.get('contentType', ''):
-                      content = []
-                      for line in response['response'].iter_lines(chunk_size=1):
-                          if line:
-                              line = line.decode('utf-8')
-                              if line.startswith('data: '):
-                                  data = line[6:].strip('"')
-                                  if data and data != '[DONE]':
-                                      content.append(data)
-                      full_response = ' '.join(content)
-                  else:
-                      full_response = json.loads(response['response'].read())
-
-                  # Store analysis results
-                  store_sentiment_analysis(feedback_id, full_response)
-
-                  return {
-                      'statusCode': 200,
-                      'body': json.dumps({
-                          'feedback_id': feedback_id,
-                          'agent_response': full_response,
-                          'session_id': session_id
-                      })
-                  }
-
-              except Exception as e:
-                  print(f"Error invoking agent: {e}")
-                  return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
-
-          def get_recent_sentiments(customer_id):
-              """Get recent sentiment history for context."""
-              if not customer_id:
-                  return []
-
-              try:
-                  dynamodb = boto3.resource('dynamodb')
-                  table = dynamodb.Table(f'${AWS::StackName}-sentiment-analysis-${EnvironmentName}')
-
-                  response = table.query(
-                      IndexName='CustomerIndex',
-                      KeyConditionExpression='customer_id = :cid',
-                      ExpressionAttributeValues={':cid': customer_id},
-                      ScanIndexForward=False,
-                      Limit=5
-                  )
-
-                  return [
-                      {
-                          'sentiment_score': item['sentiment_score'],
-                          'analysis_timestamp': item['analysis_timestamp'],
-                          'feedback_text': item.get('feedback_text', '')[:100]
-                      }
-                      for item in response.get('Items', [])
-                  ]
-              except Exception as e:
-                  print(f"Error getting recent sentiments: {e}")
-                  return []
-
-          def store_sentiment_analysis(feedback_id, agent_response):
-              """Store sentiment analysis results in DynamoDB."""
-              try:
-                  # Parse agent response for sentiment data
-                  # This is a simplified example - in practice, you'd parse the actual agent response
-                  sentiment_score = 0.5  # Neutral default
-                  analysis_text = str(agent_response)
-
-                  dynamodb = boto3.resource('dynamodb')
-                  table = dynamodb.Table(f'${AWS::StackName}-sentiment-analysis-${EnvironmentName}')
-
-                  table.put_item(Item={
-                      'feedback_id': feedback_id,
-                      'sentiment_score': sentiment_score,
-                      'analysis_timestamp': boto3.client('dynamodb').meta.service_model.operation_model('PutItem').metadata['timestamp'],
-                      'agent_response': analysis_text,
-                      'model_used': os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-3-5-sonnet-20241022-v2:0')
-                  })
-              except Exception as e:
-                  print(f"Error storing sentiment analysis: {e}")
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub 'lambda/agent-invoker-${EnvironmentName}.zip'
 
       Timeout: 300  # 5 minutes for agent processing
       MemorySize: 512
@@ -515,100 +297,10 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-crm-integrator-${EnvironmentName}'
       Runtime: python3.11
-      Handler: index.lambda_handler
+      Handler: crm_integrator.lambda_handler
       Code:
-        ZipFile: !Sub |
-          import json
-          import boto3
-          import os
-          from botocore.exceptions import ClientError
-
-          def lambda_handler(event, context):
-              """Integrate with CRM systems (Salesforce, HubSpot)."""
-              try:
-                  action = event.get('action')
-                  data = event.get('data', {})
-
-                  if not action:
-                      return {'statusCode': 400, 'body': json.dumps({'error': 'action required'})}
-
-                  # Check if CRM integration is enabled
-                  if not is_crm_enabled():
-                      return {'statusCode': 200, 'body': json.dumps({'message': 'CRM integration disabled'})}
-
-                  # Get CRM credentials from DynamoDB config
-                  crm_config = get_crm_config()
-                  if not crm_config:
-                      return {'statusCode': 503, 'body': json.dumps({'error': 'CRM not configured'})}
-
-                  # Route to appropriate CRM handler
-                  if crm_config['provider'] == 'salesforce':
-                      result = handle_salesforce_action(action, data, crm_config)
-                  elif crm_config['provider'] == 'hubspot':
-                      result = handle_hubspot_action(action, data, crm_config)
-                  else:
-                      return {'statusCode': 400, 'body': json.dumps({'error': 'Unsupported CRM provider'})}
-
-                  return {'statusCode': 200, 'body': json.dumps(result)}
-
-              except Exception as e:
-                  print(f"Error in CRM integration: {e}")
-                  return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
-
-          def is_crm_enabled():
-              """Check if CRM integration is enabled."""
-              try:
-                  dynamodb = boto3.resource('dynamodb')
-                  table = dynamodb.Table(f'${AWS::StackName}-agent-config-${EnvironmentName}')
-
-                  response = table.get_item(Key={'config_key': 'crm_enabled'})
-                  return response.get('Item', {}).get('config_value') == 'true'
-              except Exception as e:
-                  print(f"Error checking CRM status: {e}")
-                  return False
-
-          def get_crm_config():
-              """Get CRM configuration from DynamoDB."""
-              try:
-                  dynamodb = boto3.resource('dynamodb')
-                  table = dynamodb.Table(f'${AWS::StackName}-agent-config-${EnvironmentName}')
-
-                  # Get all CRM-related config
-                  response = table.scan(
-                      FilterExpression='begins_with(config_key, :prefix)',
-                      ExpressionAttributeValues={':prefix': 'crm_'}
-                  )
-
-                  config = {}
-                  for item in response.get('Items', []):
-                      config[item['config_key']] = item['config_value']
-
-                  return config if config else None
-              except Exception as e:
-                  print(f"Error getting CRM config: {e}")
-                  return None
-
-          def handle_salesforce_action(action, data, config):
-              """Handle Salesforce CRM actions."""
-              # Implementation would use Salesforce REST API
-              # This is a placeholder for the actual Salesforce integration
-              return {
-                  'provider': 'salesforce',
-                  'action': action,
-                  'status': 'success',
-                  'data': data
-              }
-
-          def handle_hubspot_action(action, data, config):
-              """Handle HubSpot CRM actions."""
-              # Implementation would use HubSpot API
-              # This is a placeholder for the actual HubSpot integration
-              return {
-                  'provider': 'hubspot',
-                  'action': action,
-                  'status': 'success',
-                  'data': data
-              }
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub 'lambda/crm-integrator-${EnvironmentName}.zip'
 
       Timeout: 60
       MemorySize: 256
@@ -651,119 +343,10 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-agent-deployment-${EnvironmentName}'
       Runtime: python3.11
-      Handler: index.lambda_handler
+      Handler: agent_deployment.lambda_handler
       Code:
-        ZipFile: !Sub |
-          import json
-          import boto3
-          import os
-          import zipfile
-          import tempfile
-          from botocore.exceptions import ClientError
-
-          def lambda_handler(event, context):
-              """Custom CloudFormation resource for AgentCore Runtime deployment."""
-              try:
-                  request_type = event['RequestType']
-
-                  if request_type == 'Create':
-                      return create_agent_runtime(event, context)
-                  elif request_type == 'Update':
-                      return update_agent_runtime(event, context)
-                  elif request_type == 'Delete':
-                      return delete_agent_runtime(event, context)
-                  else:
-                      return {'Status': 'Failed', 'Reason': f'Unknown request type: {request_type}'}
-
-              except Exception as e:
-                  print(f"Error in agent deployment: {e}")
-                  return {'Status': 'Failed', 'Reason': str(e)}
-
-          def create_agent_runtime(event, context):
-              """Create AgentCore Runtime."""
-              try:
-                  # Get ECR repository URI
-                  ecr_client = boto3.client('ecr')
-                  repo_response = ecr_client.describe_repositories(repositoryNames=[f'insightmodai-agent-{EnvironmentName}'])
-                  repository_uri = repo_response['repositories'][0]['repositoryUri']
-
-                  # Get latest image
-                  image_response = ecr_client.list_images(repositoryName=f'insightmodai-agent-{EnvironmentName}')
-                  if not image_response['imageIds']:
-                      raise Exception('No images found in ECR repository')
-
-                  latest_image = image_response['imageIds'][0]
-                  image_uri = f'{repository_uri}:{latest_image["imageTag"] or "latest"}'
-
-                  # Create AgentCore Runtime
-                  agentcore_client = boto3.client('bedrock-agentcore')
-                  runtime_response = agentcore_client.create_agent_runtime(
-                      agentRuntimeName=f'insightmodai-agent-{EnvironmentName}',
-                      agentRuntimeArtifact={
-                          'containerConfiguration': {
-                              'containerUri': image_uri
-                          }
-                      },
-                      networkConfiguration={'networkMode': 'PUBLIC'},
-                      roleArn=os.environ['AGENTCORE_EXECUTION_ROLE_ARN']
-                  )
-
-                  runtime_arn = runtime_response['agentRuntimeArn']
-
-                  # Store ARN in SSM Parameter Store
-                  ssm = boto3.client('ssm')
-                  ssm.put_parameter(
-                      Name=f'/insightmodai/agent-runtime-arn-{EnvironmentName}',
-                      Value=runtime_arn,
-                      Type='String',
-                      Overwrite=True
-                  )
-
-                  return {
-                      'Status': 'Success',
-                      'PhysicalResourceId': runtime_arn,
-                      'Data': {
-                          'AgentRuntimeArn': runtime_arn,
-                          'ImageUri': image_uri
-                      }
-                  }
-
-              except Exception as e:
-                  print(f"Error creating agent runtime: {e}")
-                  raise
-
-          def update_agent_runtime(event, context):
-              """Update AgentCore Runtime (placeholder - would need update API when available)."""
-              physical_resource_id = event.get('PhysicalResourceId', '')
-              return {
-                  'Status': 'Success',
-                  'PhysicalResourceId': physical_resource_id
-              }
-
-          def delete_agent_runtime(event, context):
-              """Delete AgentCore Runtime."""
-              try:
-                  physical_resource_id = event.get('PhysicalResourceId', '')
-                  if physical_resource_id:
-                      agentcore_client = boto3.client('bedrock-agentcore')
-                      # Note: delete_agent_runtime API may not be available yet
-                      # agentcore_client.delete_agent_runtime(agentRuntimeArn=physical_resource_id)
-
-                  # Clean up SSM parameter
-                  ssm = boto3.client('ssm')
-                  try:
-                      ssm.delete_parameter(Name=f'/insightmodai/agent-runtime-arn-{EnvironmentName}')
-                  except ssm.exceptions.ParameterNotFound:
-                      pass  # Parameter already deleted
-
-                  return {
-                      'Status': 'Success',
-                      'PhysicalResourceId': physical_resource_id
-                  }
-
-              except Exception as e:
-                  print(f"Error deleting agent runtime: {e}")
-                  return {'Status': 'Failed', 'Reason': str(e)}
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub 'lambda/agent-deployment-${EnvironmentName}.zip'
 
       Timeout: 900  # 15 minutes for container operations
       MemorySize: 512
@@ -1140,6 +723,12 @@ Resources:
       VerificationMessageTemplate:
         DefaultEmailOption: CONFIRM_WITH_CODE
 
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref CognitoDomainName
+      UserPoolId: !Ref UserPool
+
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
@@ -1360,6 +949,12 @@ Outputs:
     Value: !Ref UserPoolClient
     Export:
       Name: !Sub '${AWS::StackName}-user-pool-client-id-${EnvironmentName}'
+
+  CognitoDomain:
+    Description: 'Cognito User Pool Domain for authentication'
+    Value: !Sub 'https://${CognitoDomainName}.auth.${AWS::Region}.amazoncognito.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-cognito-domain-${EnvironmentName}'
 
   ECRRepositoryUri:
     Description: 'ECR repository URI for agent container'

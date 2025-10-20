@@ -210,25 +210,21 @@ jobs:
           echo "📦 Packaging Lambda functions..."
           ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
 
-          # Package feedback-ingestion function
+          # Package each Lambda function from lambda directory
           cd lambda
-          zip -r feedback-ingestion-${ENVIRONMENT}.zip feedback_ingestion.py
-          mv feedback-ingestion-${ENVIRONMENT}.zip ..
-          cd ..
+
+          # Package feedback-ingestion function
+          zip -r ../feedback-ingestion-${ENVIRONMENT}.zip feedback_ingestion.py
 
           # Package agent-invoker function
-          zip -r agent-invoker-${ENVIRONMENT}.zip agent_invoker.py
-          mv agent-invoker-${ENVIRONMENT}.zip ..
-          cd ..
+          zip -r ../agent-invoker-${ENVIRONMENT}.zip agent_invoker.py
 
           # Package crm-integrator function
-          zip -r crm-integrator-${ENVIRONMENT}.zip crm_integrator.py
-          mv crm-integrator-${ENVIRONMENT}.zip ..
-          cd ..
+          zip -r ../crm-integrator-${ENVIRONMENT}.zip crm_integrator.py
 
           # Package agent-deployment function
-          zip -r agent-deployment-${ENVIRONMENT}.zip agent_deployment.py
-          mv agent-deployment-${ENVIRONMENT}.zip ..
+          zip -r ../agent-deployment-${ENVIRONMENT}.zip agent_deployment.py
+
           cd ..
 
           # Verify files exist

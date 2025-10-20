@@ -186,41 +186,6 @@ jobs:
           gunzip agent-container.tar.gz
           docker load < agent-container.tar
 
-      - name: Package Lambda functions
-        run: |
-          echo "📦 Packaging Lambda functions..."
-
-          # Create Lambda packages directory
-          mkdir -p lambda-packages
-
-          # Package each Lambda function
-          for func in feedback_ingestion agent_invoker crm_integrator agent_deployment; do
-            echo "Packaging $func..."
-            cd lambda
-            zip -r "../lambda-packages/${func}-${{ github.event.inputs.environment || 'prod' }}.zip" "${func}.py"
-            cd ..
-          done
-
-          echo "✅ Lambda functions packaged successfully"
-
-      - name: Upload Lambda code to S3
-        run: |
-          echo "📤 Uploading Lambda code to S3..."
-
-          # Create a unique bucket name for Lambda code
-          BUCKET_NAME="insightmodai-lambda-code-${{ github.run_id }}-${{ github.run_attempt }}"
-
-          # Create S3 bucket
-          aws s3 mb "s3://${BUCKET_NAME}" --region ${{ env.AWS_REGION }}
-
-          # Upload Lambda packages
-          aws s3 cp lambda-packages/ "s3://${BUCKET_NAME}/lambda/" --recursive --region ${{ env.AWS_REGION }}
-
-          # Set bucket name as output for CloudFormation
-          echo "LAMBDA_CODE_BUCKET=${BUCKET_NAME}" >> $GITHUB_ENV
-
-          echo "✅ Lambda code uploaded to s3://${BUCKET_NAME}"
-
       - name: Load environment configuration
         id: config
         run: |
@@ -309,6 +274,41 @@ jobs:
           echo "AWS_REGION=${{ steps.config.outputs.AWS_REGION_VAL }}" >> $GITHUB_ENV
           echo "AWS_ROLE_TO_ASSUME=${{ steps.config.outputs.AWS_ROLE_ARN }}" >> $GITHUB_ENV
           echo "COGNITO_DOMAIN_NAME=${{ steps.generate-domain.outputs.COGNITO_DOMAIN }}" >> $GITHUB_ENV
+
+      - name: Package Lambda functions
+        run: |
+          echo "📦 Packaging Lambda functions..."
+
+          # Create Lambda packages directory
+          mkdir -p lambda-packages
+
+          # Package each Lambda function
+          for func in feedback_ingestion agent_invoker crm_integrator agent_deployment; do
+            echo "Packaging $func..."
+            cd lambda
+            zip -r "../lambda-packages/${func}-${{ github.event.inputs.environment || 'prod' }}.zip" "${func}.py"
+            cd ..
+          done
+
+          echo "✅ Lambda functions packaged successfully"
+
+      - name: Upload Lambda code to S3
+        run: |
+          echo "📤 Uploading Lambda code to S3..."
+
+          # Create a unique bucket name for Lambda code
+          BUCKET_NAME="insightmodai-lambda-code-${{ github.run_id }}-${{ github.run_attempt }}"
+
+          # Create S3 bucket
+          aws s3 mb "s3://${BUCKET_NAME}" --region ${{ env.AWS_REGION }}
+
+          # Upload Lambda packages
+          aws s3 cp lambda-packages/ "s3://${BUCKET_NAME}/lambda/" --recursive --region ${{ env.AWS_REGION }}
+
+          # Set bucket name as output for CloudFormation
+          echo "LAMBDA_CODE_BUCKET=${BUCKET_NAME}" >> $GITHUB_ENV
+
+          echo "✅ Lambda code uploaded to s3://${BUCKET_NAME}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5.0.0

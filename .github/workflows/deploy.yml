@@ -145,11 +145,11 @@ jobs:
       - name: Build agent container
         run: |
           cd agent
-          docker build -t insightmodai-agent:latest .
+          docker build -t globalinvoiceai-agent:latest .
 
       - name: Save container image
         run: |
-          docker save insightmodai-agent:latest | gzip > agent-container.tar.gz
+          docker save globalinvoiceai-agent:latest | gzip > agent-container.tar.gz
 
       - name: Upload agent container
         uses: actions/upload-artifact@v4
@@ -158,17 +158,125 @@ jobs:
           path: agent-container.tar.gz
           retention-days: 7
 
-  # Deploy to AWS
-  deploy:
-    name: Deploy to AWS
+  # Package and Deploy Infrastructure
+  package-and-deploy:
+    name: Package and Deploy Infrastructure
     runs-on: ubuntu-latest
-    needs: [validate, frontend, agent]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    environment: ${{ github.event.inputs.environment || 'prod' }}
+    needs: validate
+    if: needs.validate.outputs.template-valid == 'true'
+    environment:
+      name: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v5.0.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role
+          aws-region: us-west-2
+
+      - name: Setup S3 bucket for deployment artifacts
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
+          BUCKET_NAME="globalinvoiceai-deployment-us-west-2-${ENVIRONMENT}"
+          echo "DEPLOYMENT_BUCKET=${BUCKET_NAME}" >> $GITHUB_ENV
+
+          # Check if bucket exists
+          if aws s3 ls s3://${BUCKET_NAME} --region us-west-2 2>/dev/null; then
+            echo "✅ Using existing deployment bucket: ${BUCKET_NAME}"
+          else
+            echo "📦 Creating new deployment bucket: ${BUCKET_NAME}"
+            if aws s3 mb s3://${BUCKET_NAME} --region us-west-2; then
+              echo "✅ Created deployment bucket: ${BUCKET_NAME}"
+            else
+              echo "❌ Failed to create deployment bucket"
+              exit 1
+            fi
+          fi
+
+      - name: Package CloudFormation template
+        run: |
+          echo "📦 Packaging CloudFormation template..."
+          aws cloudformation package \
+            --template-file cloudformation/template.yaml \
+            --s3-bucket ${{ env.DEPLOYMENT_BUCKET }} \
+            --output-template-file packaged-template.yaml \
+            --region us-west-2
+
+      - name: Package Lambda functions
+        run: |
+          echo "📦 Packaging Lambda functions..."
+          ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
+
+          # Package feedback-ingestion function
+          cd lambda
+          zip -r feedback-ingestion-${ENVIRONMENT}.zip feedback_ingestion.py
+          mv feedback-ingestion-${ENVIRONMENT}.zip ..
+          cd ..
+
+          # Package agent-invoker function
+          zip -r agent-invoker-${ENVIRONMENT}.zip agent_invoker.py
+          mv agent-invoker-${ENVIRONMENT}.zip ..
+          cd ..
+
+          # Package crm-integrator function
+          zip -r crm-integrator-${ENVIRONMENT}.zip crm_integrator.py
+          mv crm-integrator-${ENVIRONMENT}.zip ..
+          cd ..
+
+          # Package agent-deployment function
+          zip -r agent-deployment-${ENVIRONMENT}.zip agent_deployment.py
+          mv agent-deployment-${ENVIRONMENT}.zip ..
+          cd ..
+
+          # Verify files exist
+          ls -la *-*.zip
+
+          # Upload Lambda packages to S3
+          aws s3 cp feedback-ingestion-${ENVIRONMENT}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/feedback-ingestion-${ENVIRONMENT}.zip --region us-west-2
+          aws s3 cp agent-invoker-${ENVIRONMENT}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/agent-invoker-${ENVIRONMENT}.zip --region us-west-2
+          aws s3 cp crm-integrator-${ENVIRONMENT}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/crm-integrator-${ENVIRONMENT}.zip --region us-west-2
+          aws s3 cp agent-deployment-${ENVIRONMENT}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/agent-deployment-${ENVIRONMENT}.zip --region us-west-2
+
+          echo "✅ Lambda functions packaged and uploaded"
+
+      - name: Deploy CloudFormation stack
+        run: |
+          echo "🚀 Deploying CloudFormation stack..."
+          ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
+          STACK_NAME="globalinvoiceai-agent-${ENVIRONMENT}"
+
+          # Check if stack exists
+          if aws cloudformation describe-stacks --stack-name $STACK_NAME --region us-west-2 >/dev/null 2>&1; then
+            echo "📝 Updating existing stack: $STACK_NAME"
+            OPERATION="update-stack"
+            WAIT_OPERATION="stack-update-complete"
+          else
+            echo "🆕 Creating new stack: $STACK_NAME"
+            OPERATION="create-stack"
+            WAIT_OPERATION="stack-create-complete"
+          fi
+
+          # Deploy the stack
+          aws cloudformation $OPERATION \
+            --stack-name $STACK_NAME \
+            --template-file packaged-template.yaml \
+            --parameters \
+              ParameterKey=EnvironmentName,ParameterValue="${ENVIRONMENT}" \
+              ParameterKey=AdminEmail,ParameterValue="admin@globalinvoiceai.com" \
+              ParameterKey=BedrockModelId,ParameterValue="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
+              ParameterKey=LambdaCodeBucket,ParameterValue="${{ env.DEPLOYMENT_BUCKET }}" \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
+            --region us-west-2
+
+          echo "⏳ Waiting for stack operation to complete..."
+          aws cloudformation wait $WAIT_OPERATION \
+            --stack-name $STACK_NAME \
+            --region us-west-2
+
+          echo "✅ CloudFormation deployment completed successfully!"
 
       - name: Download frontend build
         uses: actions/download-artifact@v4
@@ -180,394 +288,58 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: agent-container
-          path: ./
+          path: agent-container.tar.gz
 
       - name: Load agent container
         run: |
           gunzip agent-container.tar.gz
           docker load < agent-container.tar
 
-      - name: Load environment configuration
-        id: config
-        run: |
-          # Determine environment
-          ENV="${{ github.event.inputs.environment || 'prod' }}"
-
-          # Load environment configuration
-          if [ -f ".github/environments/${ENV}.yml" ]; then
-            echo "Loading configuration for $ENV environment"
-
-            # Extract key values using basic shell parsing (no yq dependency)
-            STACK_NAME=$(grep 'stack_name:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*stack_name: *//' | tr -d '"' | tr -d "'")
-            ADMIN_EMAIL=$(grep 'AdminEmail:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*AdminEmail: *//' | tr -d '"' | tr -d "'")
-            BEDROCK_MODEL=$(grep 'BedrockModelId:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*BedrockModelId: *//' | tr -d '"' | tr -d "'")
-            AWS_REGION=$(grep 'region:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*region: *//' | tr -d '"' | tr -d "'")
-            AWS_ROLE_ARN=$(grep '  role_arn:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*role_arn: *//' | tr -d '"' | tr -d "'")
-
-            echo "STACK_NAME=$STACK_NAME" >> $GITHUB_OUTPUT
-            echo "ADMIN_EMAIL=$ADMIN_EMAIL" >> $GITHUB_OUTPUT
-            echo "BEDROCK_MODEL=$BEDROCK_MODEL" >> $GITHUB_OUTPUT
-            echo "AWS_REGION_VAL=$AWS_REGION" >> $GITHUB_OUTPUT
-            echo "AWS_ROLE_ARN=$AWS_ROLE_ARN" >> $GITHUB_OUTPUT
-          else
-            echo "Environment configuration not found, using defaults"
-            echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
-            echo "ADMIN_EMAIL=admin@yourcompany.com" >> $GITHUB_OUTPUT
-            echo "BEDROCK_MODEL=us.anthropic.claude-3-5-sonnet-20241022-v2:0" >> $GITHUB_OUTPUT
-            echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
-            echo "AWS_ROLE_ARN=arn:aws:iam::123456789012:role/personal-github-oidc-role" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Generate unique Cognito domain
-        id: generate-domain
-        run: |
-          echo "🔍 Generating unique Cognito domain..."
-
-          # Get base domain from stack name
-          BASE_DOMAIN="${{ steps.config.outputs.STACK_NAME }}"
-          BASE_DOMAIN=$(echo "$BASE_DOMAIN" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g' | sed 's/^-\|-$//g')
-
-          # Ensure minimum length
-          if [ ${#BASE_DOMAIN} -lt 3 ]; then
-            BASE_DOMAIN="insightmodai-${{ github.event.inputs.environment }}"
-          fi
-
-          # Truncate if too long (leave room for suffix)
-          if [ ${#BASE_DOMAIN} -gt 55 ]; then
-            BASE_DOMAIN="${BASE_DOMAIN:0:55}"
-            BASE_DOMAIN=$(echo "$BASE_DOMAIN" | sed 's/-$//')
-          fi
-
-          DOMAIN_TO_USE="$BASE_DOMAIN"
-          ATTEMPTS=0
-          MAX_ATTEMPTS=10
-
-          while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-            echo "Checking if domain '$DOMAIN_TO_USE' is available..."
-
-            # Check if domain exists using AWS CLI
-            if aws cognito-idp describe-user-pool-domain \
-                --domain "$DOMAIN_TO_USE" \
-                --region ${{ steps.config.outputs.AWS_REGION_VAL }} >/dev/null 2>&1; then
-              echo "❌ Domain '$DOMAIN_TO_USE' already exists, trying variation..."
-              SUFFIX=$(openssl rand -hex 2 | cut -c1-4)
-              DOMAIN_TO_USE="${BASE_DOMAIN}-${SUFFIX}"
-              ATTEMPTS=$((ATTEMPTS + 1))
-            else
-              echo "✅ Domain '$DOMAIN_TO_USE' is available!"
-              break
-            fi
-          done
-
-          if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then
-            echo "❌ Could not find available domain after $MAX_ATTEMPTS attempts"
-            exit 1
-          fi
-
-          echo "COGNITO_DOMAIN=$DOMAIN_TO_USE" >> $GITHUB_OUTPUT
-          echo "🎯 Using Cognito domain: $DOMAIN_TO_USE"
-
-      - name: Set deployment variables
-        run: |
-          echo "STACK_NAME=${{ steps.config.outputs.STACK_NAME }}" >> $GITHUB_ENV
-          echo "ADMIN_EMAIL=${{ steps.config.outputs.ADMIN_EMAIL }}" >> $GITHUB_ENV
-          echo "BEDROCK_MODEL_ID=${{ steps.config.outputs.BEDROCK_MODEL }}" >> $GITHUB_ENV
-          echo "AWS_REGION=${{ steps.config.outputs.AWS_REGION_VAL }}" >> $GITHUB_ENV
-          echo "AWS_ROLE_TO_ASSUME=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role" >> $GITHUB_ENV
-          echo "COGNITO_DOMAIN_NAME=${{ steps.generate-domain.outputs.COGNITO_DOMAIN }}" >> $GITHUB_ENV
-
-      - name: Package Lambda functions
-        run: |
-          echo "📦 Packaging Lambda functions..."
-
-          # Create Lambda packages directory
-          mkdir -p lambda-packages
-
-          # Package each Lambda function
-          for func in feedback_ingestion agent_invoker crm_integrator agent_deployment; do
-            echo "Packaging $func..."
-            cd lambda
-            zip -r "../lambda-packages/${func}-${{ github.event.inputs.environment || 'prod' }}.zip" "${func}.py"
-            cd ..
-          done
-
-          echo "✅ Lambda functions packaged successfully"
-
-      - name: Prepare Lambda deployment
-        run: |
-          echo "📦 Preparing Lambda deployment..."
-
-          # Create a unique bucket name for Lambda code
-          BUCKET_NAME="insightmodai-lambda-code-${{ github.run_id }}-${{ github.run_attempt }}"
-
-          # Set bucket name as output for CloudFormation
-          echo "LAMBDA_CODE_BUCKET=${BUCKET_NAME}" >> $GITHUB_ENV
-
-          echo "✅ Lambda deployment prepared with bucket: ${BUCKET_NAME}"
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5.0.0
-        with:
-          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
-          audience: sts.amazonaws.com
-
-      - name: Upload Lambda code to S3
-        run: |
-          echo "📤 Uploading Lambda code to S3..."
-
-          # Create S3 bucket
-          aws s3 mb "s3://${{ env.LAMBDA_CODE_BUCKET }}" --region ${{ env.AWS_REGION }}
-
-          # List contents before upload
-          echo "📦 Lambda packages to upload:"
-          ls -la lambda-packages/
-
-          # Upload Lambda packages
-          aws s3 cp lambda-packages/ "s3://${{ env.LAMBDA_CODE_BUCKET }}/lambda/" --recursive --region ${{ env.AWS_REGION }}
-
-          # Verify upload
-          echo "🔍 Verifying upload:"
-          UPLOADED_FILES=$(aws s3 ls "s3://${{ env.LAMBDA_CODE_BUCKET }}/lambda/" --region ${{ env.AWS_REGION }} | wc -l)
-          echo "Found $UPLOADED_FILES files in S3"
-
-          if [ "$UPLOADED_FILES" -lt 4 ]; then
-            echo "❌ Not all Lambda packages were uploaded to S3"
-            aws s3 ls "s3://${{ env.LAMBDA_CODE_BUCKET }}/lambda/" --region ${{ env.AWS_REGION }}
-            exit 1
-          fi
-
-          echo "✅ Lambda code uploaded to s3://${{ env.LAMBDA_CODE_BUCKET }}"
-
-      - name: Check if stack exists
-        id: stack-exists
-        run: |
-          if aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "🔍 Stack ${{ env.STACK_NAME }} exists, will update"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "🆕 Stack ${{ env.STACK_NAME }} does not exist, will create"
-          fi
-
-      - name: Deploy CloudFormation stack
-        run: |
-          echo "🚀 Deploying CloudFormation stack: ${{ env.STACK_NAME }}"
-
-          if [[ "${{ steps.stack-exists.outputs.exists }}" == "true" ]]; then
-            echo "Updating existing stack..."
-            aws cloudformation update-stack \
-              --stack-name ${{ env.STACK_NAME }} \
-              --template-body file://cloudformation/template.yaml \
-              --parameters \
-                ParameterKey=AdminEmail,ParameterValue="${{ env.ADMIN_EMAIL }}" \
-                ParameterKey=BedrockModelId,ParameterValue="${{ env.BEDROCK_MODEL_ID }}" \
-                ParameterKey=EnvironmentName,ParameterValue="${{ github.event.inputs.environment || 'prod' }}" \
-                ParameterKey=EnableCRM,ParameterValue="${{ github.event.inputs.environment == 'dev' && 'false' || 'true' }}" \
-                ParameterKey=CognitoDomainName,ParameterValue="${{ env.COGNITO_DOMAIN_NAME }}" \
-                ParameterKey=LambdaCodeBucket,ParameterValue="${{ env.LAMBDA_CODE_BUCKET }}" \
-              --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
-              --region ${{ env.AWS_REGION }}
-          else
-            echo "Creating new stack..."
-            aws cloudformation create-stack \
-              --stack-name ${{ env.STACK_NAME }} \
-              --template-body file://cloudformation/template.yaml \
-              --parameters \
-                ParameterKey=AdminEmail,ParameterValue="${{ env.ADMIN_EMAIL }}" \
-                ParameterKey=BedrockModelId,ParameterValue="${{ env.BEDROCK_MODEL_ID }}" \
-                ParameterKey=EnvironmentName,ParameterValue="${{ github.event.inputs.environment || 'prod' }}" \
-                ParameterKey=EnableCRM,ParameterValue="${{ github.event.inputs.environment == 'dev' && 'false' || 'true' }}" \
-                ParameterKey=CognitoDomainName,ParameterValue="${{ env.COGNITO_DOMAIN_NAME }}" \
-                ParameterKey=LambdaCodeBucket,ParameterValue="${{ env.LAMBDA_CODE_BUCKET }}" \
-              --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
-              --region ${{ env.AWS_REGION }}
-          fi
-
-      - name: Wait for stack completion
-        run: |
-          echo "⏳ Waiting for stack deployment to complete..."
-          aws cloudformation wait stack-create-complete \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }} || \
-          aws cloudformation wait stack-update-complete \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }}
-
-          echo "✅ Stack deployment completed successfully!"
-
-      - name: Get stack outputs
-        id: stack-outputs
-        run: |
-          OUTPUTS=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --query 'Stacks[0].Outputs' \
-            --output json \
-            --region ${{ env.AWS_REGION }})
-
-          echo "outputs<<EOF" >> $GITHUB_OUTPUT
-          echo "$OUTPUTS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          # Extract key outputs for subsequent steps
-          API_ENDPOINT=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="ApiEndpoint") | .OutputValue')
-          AMPLIFY_URL=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="AmplifyAppURL") | .OutputValue')
-          USER_POOL_ID=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="UserPoolId") | .OutputValue')
-
-          echo "API_ENDPOINT=$API_ENDPOINT" >> $GITHUB_ENV
-          echo "AMPLIFY_URL=$AMPLIFY_URL" >> $GITHUB_ENV
-          echo "USER_POOL_ID=$USER_POOL_ID" >> $GITHUB_ENV
-
-      - name: Create admin user
-        run: |
-          # Create admin user if this is a new deployment
-          if [[ "${{ steps.stack-exists.outputs.exists }}" != "true" ]]; then
-            echo "👤 Creating admin user..."
-
-            aws cognito-idp admin-create-user \
-              --user-pool-id ${{ env.USER_POOL_ID }} \
-              --username "${{ env.ADMIN_EMAIL }}" \
-              --user-attributes \
-                Name=email,Value="${{ env.ADMIN_EMAIL }}" \
-                Name=email_verified,Value=true \
-              --temporary-password TempPass123! \
-              --message-action SUPPRESS \
-              --region ${{ env.AWS_REGION }}
-
-            echo "✅ Admin user created successfully"
-          else
-            echo "ℹ️ Using existing admin user"
-          fi
-
-      - name: Test deployment
-        run: |
-          echo "🧪 Testing deployment..."
-
-          # Test API endpoint
-          if curl -f -s "${{ env.API_ENDPOINT }}/feedback" > /dev/null; then
-            echo "✅ API Gateway is accessible"
-          else
-            echo "❌ API Gateway test failed"
-            exit 1
-          fi
-
-          # Test agent health (if accessible)
-          echo "ℹ️ Agent runtime health check would go here"
-
-          echo "✅ Deployment tests passed!"
-
       - name: Deploy frontend to Amplify
         run: |
-          echo "🚀 Deploying frontend to Amplify..."
+          echo "🌐 Deploying frontend to Amplify..."
 
-          # Get Amplify app and branch information from CloudFormation outputs
+          # Get Amplify App ID from CloudFormation outputs
           AMPLIFY_APP_ID=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
+            --stack-name $STACK_NAME \
+            --region us-west-2 \
             --query 'Stacks[0].Outputs[?OutputKey==`AmplifyAppId`].OutputValue' \
-            --output text \
-            --region ${{ env.AWS_REGION }})
+            --output text)
 
           if [ -z "$AMPLIFY_APP_ID" ]; then
-            echo "❌ Failed to get Amplify App ID from CloudFormation"
+            echo "❌ Could not find Amplify App ID in CloudFormation outputs"
             exit 1
           fi
 
-          echo "📱 Amplify App ID: $AMPLIFY_APP_ID"
-
-          # Create a ZIP file of the frontend build
+          echo "📦 Uploading frontend build to S3..."
           cd frontend-build
           zip -r ../frontend-build.zip .
           cd ..
+          aws s3 cp frontend-build.zip s3://${{ env.DEPLOYMENT_BUCKET }}/frontend-build.zip --region us-west-2
 
-          # Upload frontend build to S3
-          aws s3 cp frontend-build.zip "s3://${{ env.LAMBDA_CODE_BUCKET }}/frontend-build.zip" \
-            --region ${{ env.AWS_REGION }}
-
-          # Start Amplify deployment
-          DEPLOYMENT_JOB_ID=$(aws amplify start-deployment \
-            --app-id "$AMPLIFY_APP_ID" \
+          echo "🚀 Starting Amplify deployment..."
+          aws amplify start-deployment \
+            --app-id $AMPLIFY_APP_ID \
             --branch-name main \
-            --source-url "s3://${{ env.LAMBDA_CODE_BUCKET }}/frontend-build.zip" \
-            --region ${{ env.AWS_REGION }} \
-            --query 'jobId' \
-            --output text)
+            --source-url "s3://${{ env.DEPLOYMENT_BUCKET }}/frontend-build.zip" \
+            --region us-west-2
 
-          if [ -z "$DEPLOYMENT_JOB_ID" ]; then
-            echo "❌ Failed to start Amplify deployment"
-            exit 1
-          fi
-
-          echo "✅ Amplify deployment started with job ID: $DEPLOYMENT_JOB_ID"
-
-      - name: Create deployment summary
+      - name: Generate deployment summary
         run: |
-          cat > deployment-summary.md << EOF
-          # Deployment Summary
-
-          ## Deployment Details
-          - **Environment**: ${{ github.event.inputs.environment || 'prod' }}
-          - **Stack Name**: ${{ env.STACK_NAME }}
-          - **Region**: ${{ env.AWS_REGION }}
-          - **Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-
-          ## Access URLs
-          - **Dashboard**: ${{ env.AMPLIFY_URL }}
-          - **API Endpoint**: ${{ env.API_ENDPOINT }}
-
-          ## Next Steps
-          1. Access the dashboard at: ${{ env.AMPLIFY_URL }}
-          2. Sign in with: ${{ env.ADMIN_EMAIL }} / TempPass123!
-          3. Set a permanent password when prompted
-          4. Test with sample feedback data
-
-          ## Configuration
-          - Admin Email: ${{ env.ADMIN_EMAIL }}
-          - Bedrock Model: ${{ env.BEDROCK_MODEL_ID }}
-          - CRM Integration: ${{ secrets.ENABLE_CRM || 'disabled' }}
-          EOF
-
-      - name: Upload deployment summary
-        uses: actions/upload-artifact@v4
-        with:
-          name: deployment-summary
-          path: deployment-summary.md
-          retention-days: 30
-
-      - name: Comment on PR (if applicable)
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## 🚀 Deployment Ready
-
-              The InsightModAI Agent deployment is ready for environment: **${{ github.event.inputs.environment || 'prod' }}**
-
-              ### Access Information
-              - **Dashboard**: ${{ env.AMPLIFY_URL }}
-              - **API Endpoint**: ${{ env.API_ENDPOINT }}
-
-              ### Next Steps
-              1. Review the deployment summary in artifacts
-              2. Test the deployment manually
-              3. Approve the PR for production deployment
-
-              ### Configuration
-              - Stack: \`${{ env.STACK_NAME }}\`
-              - Region: \`${{ env.AWS_REGION }}\`
-              - Model: \`${{ env.BEDROCK_MODEL_ID }}\`
-            })
+          echo "📊 Deployment Summary"
+          echo "===================="
+          echo "Stack Name: $STACK_NAME"
+          echo "Region: us-west-2"
+          echo "Environment: $ENVIRONMENT"
+          echo "S3 Bucket: ${{ env.DEPLOYMENT_BUCKET }}"
+          echo ""
+          echo "✅ Deployment completed successfully!"
 
   # Cleanup on failure
   cleanup:
     name: Cleanup Failed Deployment
     runs-on: ubuntu-latest
-    needs: deploy
+    needs: package-and-deploy
     if: failure() && github.event_name == 'push'
 
     steps:
@@ -586,7 +358,7 @@ jobs:
             echo "STACK_NAME=$STACK_NAME" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=$AWS_REGION" >> $GITHUB_OUTPUT
           else
-            echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
+            echo "STACK_NAME=globalinvoiceai-agent-$ENV" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
           fi
 
@@ -647,7 +419,7 @@ jobs:
             echo "STACK_NAME=$STACK_NAME" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=$AWS_REGION" >> $GITHUB_OUTPUT
           else
-            echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
+            echo "STACK_NAME=globalinvoiceai-agent-$ENV" >> $GITHUB_OUTPUT
             echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
           fi
 

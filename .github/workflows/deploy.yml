@@ -276,33 +276,46 @@ jobs:
           if [ -z "$COGNITO_DOMAIN" ]; then
             echo "🔍 Generating unique Cognito domain..."
             BASE_DOMAIN="insightmodai-${ENVIRONMENT}"
-            # Use timestamp + random for more uniqueness
-            TIMESTAMP=$(date +%s | tail -c 4)
-            RANDOM_SUFFIX=$(openssl rand -hex 3)
-            COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP}-${RANDOM_SUFFIX}"
             
-            # Verify domain is available
+            # Try to find available domain
             ATTEMPTS=0
-            MAX_ATTEMPTS=5
+            MAX_ATTEMPTS=10
+            FOUND=false
             
             while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-              echo "🔍 Checking if domain '$COGNITO_DOMAIN' is available..."
+              # Generate new timestamp and random suffix each time for uniqueness
+              TIMESTAMP=$(date +%s%N | cut -b1-13)  # milliseconds timestamp
+              RANDOM_SUFFIX=$(openssl rand -hex 4)  # 8 hex characters
+              COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP: -6}-${RANDOM_SUFFIX}"
               
-              if aws cognito-idp describe-user-pool-domain \
+              echo "🔍 Checking domain '$COGNITO_DOMAIN' (attempt $((ATTEMPTS + 1))/$MAX_ATTEMPTS)..."
+              
+              # Check if domain exists - capture output for debugging
+              DOMAIN_CHECK=$(aws cognito-idp describe-user-pool-domain \
                   --domain "$COGNITO_DOMAIN" \
-                  --region us-west-2 >/dev/null 2>&1; then
-                echo "❌ Domain exists, generating new one..."
-                RANDOM_SUFFIX=$(openssl rand -hex 3)
-                COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP}-${RANDOM_SUFFIX}"
-                ATTEMPTS=$((ATTEMPTS + 1))
-              else
+                  --region us-west-2 2>&1)
+              
+              # Check the result
+              if echo "$DOMAIN_CHECK" | grep -q "ResourceNotFoundException\|InvalidParameterException"; then
                 echo "✅ Domain '$COGNITO_DOMAIN' is available!"
+                FOUND=true
+                break
+              elif echo "$DOMAIN_CHECK" | grep -q "DomainDescription"; then
+                echo "❌ Domain already exists, trying another..."
+              else
+                echo "⚠️ Unexpected response, assuming available"
+                echo "Response: $DOMAIN_CHECK"
+                FOUND=true
                 break
               fi
+              
+              ATTEMPTS=$((ATTEMPTS + 1))
+              sleep 1  # Brief pause to ensure timestamp changes
             done
             
-            if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then
-              echo "❌ Could not find available domain. Please clean up old Cognito domains or wait a few minutes."
+            if [ "$FOUND" = false ]; then
+              echo "❌ Could not find available domain after $MAX_ATTEMPTS attempts."
+              echo "💡 Tip: This might indicate an AWS API issue or too many existing domains."
               exit 1
             fi
           fi

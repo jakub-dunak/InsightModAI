@@ -69,11 +69,21 @@ jobs:
   frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [validate, package-and-deploy]
+    environment:
+      name: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set deployment variables
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
+          AWS_REGION="us-west-2"
+
+          echo "ENVIRONMENT=${ENVIRONMENT}" >> $GITHUB_ENV
+          echo "AWS_REGION=${AWS_REGION}" >> $GITHUB_ENV
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -96,6 +106,11 @@ jobs:
         run: |
           cd frontend
           npm ci
+
+      - name: Configure frontend with Cognito values
+        working-directory: frontend
+        run: |
+          node ../scripts/configure-frontend.js "${{ needs.package-and-deploy.outputs.user-pool-id }}" "${{ needs.package-and-deploy.outputs.user-pool-client-id }}" "${{ env.AWS_REGION }}" "${{ env.ENVIRONMENT }}"
 
       - name: Run linting
         run: |
@@ -181,10 +196,13 @@ jobs:
   package-and-deploy:
     name: Package and Deploy Infrastructure
     runs-on: ubuntu-latest
-    needs: [validate, frontend, agent]
+    needs: [validate, agent]
     if: needs.validate.outputs.template-valid == 'true'
     environment:
       name: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
+    outputs:
+      user-pool-id: ${{ steps.get-cognito-outputs.outputs.user-pool-id }}
+      user-pool-client-id: ${{ steps.get-cognito-outputs.outputs.user-pool-client-id }}
 
     steps:
       - name: Checkout code
@@ -282,6 +300,26 @@ jobs:
             --no-fail-on-empty-changeset
 
           echo "Stack deployment completed successfully"
+
+      - name: Get Cognito outputs
+        id: get-cognito-outputs
+        run: |
+          # Get User Pool ID
+          USER_POOL_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region us-west-2 \
+            --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' \
+            --output text)
+
+          # Get User Pool Client ID
+          USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region us-west-2 \
+            --query 'Stacks[0].Outputs[?OutputKey==`UserPoolClientId`].OutputValue' \
+            --output text)
+
+          echo "user-pool-id=$USER_POOL_ID" >> $GITHUB_OUTPUT
+          echo "user-pool-client-id=$USER_POOL_CLIENT_ID" >> $GITHUB_OUTPUT
 
       - name: Download frontend build
         uses: actions/download-artifact@v4

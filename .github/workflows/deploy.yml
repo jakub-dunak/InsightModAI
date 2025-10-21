@@ -75,38 +75,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Cache node modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.npm
-            frontend/node_modules
-          key: npm-${{ env.NODE_VERSION }}-${{ hashFiles('frontend/package-lock.json') }}
-          restore-keys: |
-            npm-${{ env.NODE_VERSION }}-
 
       - name: Install dependencies
-        run: |
-          cd frontend
-          npm ci
+        working-directory: frontend
+        run: npm install
 
       - name: Run linting
-        run: |
-          cd frontend
-          npm run lint || echo "Linting warnings found but continuing..."
+        working-directory: frontend
+        run: npm run lint || echo "Linting warnings found but continuing..."
 
       - name: Run tests
-        run: |
-          cd frontend
-          npm test -- --watchAll=false --coverage || echo "Tests completed with warnings"
+        working-directory: frontend
+        run: npm test -- --watchAll=false --coverage || echo "Tests completed with warnings"
 
       - name: Build frontend
-        run: |
-          cd frontend
-          npm run build
+        working-directory: frontend
+        run: npm run build
 
       - name: Upload frontend build artifacts
         uses: actions/upload-artifact@v4

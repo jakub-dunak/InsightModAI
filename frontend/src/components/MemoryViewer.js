@@ -16,7 +16,6 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Divider,
   TextField,
   InputAdornment,
 } from '@mui/material';
@@ -27,7 +26,6 @@ import {
   SmartToy,
   Memory,
   Folder,
-  Timeline,
 } from '@mui/icons-material';
 import { useAPI } from '../services/api';
 

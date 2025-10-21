@@ -289,71 +289,8 @@ jobs:
             echo "Using existing Cognito domain: $COGNITO_DOMAIN"
           fi
 
-          # Check for changes before deploying (only for updates)
-          if [ "$OPERATION" = "update-stack" ]; then
-            echo "Checking for stack changes..."
-
-            # Create a change set to detect if there are any changes
-            CHANGE_SET_NAME="changeset-$(date +%s)"
-
-            if aws cloudformation create-change-set \
-              --stack-name ${{ env.STACK_NAME }} \
-              --change-set-name "$CHANGE_SET_NAME" \
-              --template-body file://packaged-template.yaml \
-              --parameters \
-                ParameterKey=EnvironmentName,ParameterValue="${{ env.ENVIRONMENT }}" \
-                ParameterKey=AdminEmail,ParameterValue="admin@insightmodai.com" \
-                ParameterKey=BedrockModelId,ParameterValue="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
-                ParameterKey=CognitoDomainName,ParameterValue="${COGNITO_DOMAIN}" \
-                ParameterKey=LambdaCodeBucket,ParameterValue="${{ env.DEPLOYMENT_BUCKET }}" \
-              --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
-              --region us-west-2; then
-
-              echo "Change set created successfully, waiting for completion..."
-
-              # Wait for change set creation to complete with timeout
-              if aws cloudformation wait change-set-create-complete \
-                --stack-name ${{ env.STACK_NAME }} \
-                --change-set-name "$CHANGE_SET_NAME" \
-                --region us-west-2; then
-
-                # Check if change set has any changes
-                if CHANGES_COUNT=$(aws cloudformation describe-change-set \
-                  --stack-name ${{ env.STACK_NAME }} \
-                  --change-set-name "$CHANGE_SET_NAME" \
-                  --region us-west-2 \
-                  --query 'length(Changes)' \
-                  --output text 2>/dev/null); then
-
-                  if [ "$CHANGES_COUNT" = "0" ]; then
-                    echo "No changes detected in stack, skipping deployment"
-                    echo "SKIP_DEPLOYMENT=true" >> $GITHUB_ENV
-                  else
-                    echo "Found $CHANGES_COUNT change(s) in stack, proceeding with deployment"
-                    echo "SKIP_DEPLOYMENT=false" >> $GITHUB_ENV
-                  fi
-                else
-                  echo "Warning: Could not determine change count, proceeding with deployment to be safe"
-                  echo "SKIP_DEPLOYMENT=false" >> $GITHUB_ENV
-                fi
-              else
-                echo "Warning: Change set creation failed or timed out, proceeding with deployment"
-                echo "SKIP_DEPLOYMENT=false" >> $GITHUB_ENV
-              fi
-            else
-              echo "Warning: Failed to create change set, proceeding with deployment"
-              echo "SKIP_DEPLOYMENT=false" >> $GITHUB_ENV
-            fi
-
-            # Clean up the change set (ignore errors)
-            aws cloudformation delete-change-set \
-              --stack-name ${{ env.STACK_NAME }} \
-              --change-set-name "$CHANGE_SET_NAME" \
-              --region us-west-2 2>/dev/null || true
-          fi
-
-          # Deploy the stack if not skipping
-          if [ "$OPERATION" = "create-stack" ] || [ "$SKIP_DEPLOYMENT" != "true" ]; then
+          # Deploy the stack
+          if [ "$OPERATION" = "create-stack" ] || [ "$OPERATION" = "update-stack" ]; then
             echo "Deploying stack..."
             if aws cloudformation $OPERATION \
               --stack-name ${{ env.STACK_NAME }} \
@@ -380,26 +317,20 @@ jobs:
               echo "Error: Failed to initiate stack $OPERATION"
               exit 1
             fi
-          else
-            echo "Skipping stack deployment - no changes detected"
-          fi
 
       - name: Download frontend build
-        if: env.SKIP_DEPLOYMENT != 'true'
         uses: actions/download-artifact@v4
         with:
           name: frontend-build
           path: frontend-build/
 
       - name: Download agent container
-        if: env.SKIP_DEPLOYMENT != 'true'
         uses: actions/download-artifact@v4
         with:
           name: agent-container
           path: agent-container.tar.gz
 
       - name: Prepare deployment artifacts
-        if: env.SKIP_DEPLOYMENT != 'true'
         run: |
           echo "Preparing deployment artifacts..."
 
@@ -413,7 +344,6 @@ jobs:
           cd ..
 
       - name: Deploy frontend to Amplify
-        if: env.SKIP_DEPLOYMENT != 'true'
         run: |
           echo "Starting frontend deployment to Amplify..."
 
@@ -499,7 +429,6 @@ jobs:
           fi
 
       - name: Deploy agent container
-        if: env.SKIP_DEPLOYMENT != 'true'
         run: |
           echo "Starting agent container deployment..."
 

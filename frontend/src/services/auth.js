@@ -92,6 +92,83 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const signUp = async (email, password, name = '') => {
+    try {
+      setLoading(true);
+      const result = await Auth.signUp({
+        username: email,
+        password,
+        attributes: {
+          email,
+          ...(name && { name }),
+        },
+      });
+      toast.success('Account created successfully! Please check your email to confirm your account.');
+      return result;
+    } catch (error) {
+      console.error('Sign up error:', error);
+
+      let errorMessage = 'Failed to create account';
+
+      if (error.name === 'UsernameExistsException') {
+        errorMessage = 'An account with this email already exists.';
+      } else if (error.name === 'InvalidPasswordException') {
+        errorMessage = 'Password does not meet requirements. Please use at least 8 characters with numbers and symbols.';
+      } else if (error.name === 'InvalidParameterException') {
+        errorMessage = 'Invalid email format. Please enter a valid email address.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      toast.error(errorMessage);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmSignUp = async (email, code) => {
+    try {
+      setLoading(true);
+      const result = await Auth.confirmSignUp(email, code);
+      toast.success('Account confirmed successfully! You can now sign in.');
+      return result;
+    } catch (error) {
+      console.error('Confirm sign up error:', error);
+
+      let errorMessage = 'Failed to confirm account';
+
+      if (error.name === 'CodeMismatchException') {
+        errorMessage = 'Invalid confirmation code. Please check and try again.';
+      } else if (error.name === 'ExpiredCodeException') {
+        errorMessage = 'Confirmation code has expired. Please request a new one.';
+      } else if (error.name === 'NotAuthorizedException') {
+        errorMessage = 'Account is already confirmed.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      toast.error(errorMessage);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resendConfirmationCode = async (email) => {
+    try {
+      setLoading(true);
+      await Auth.resendSignUp(email);
+      toast.success('Confirmation code sent to your email.');
+    } catch (error) {
+      console.error('Resend confirmation error:', error);
+      toast.error('Failed to resend confirmation code.');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const signOut = async () => {
     try {
       setLoading(true);
@@ -130,6 +207,9 @@ export const AuthProvider = ({ children }) => {
     session,
     loading,
     signIn,
+    signUp,
+    confirmSignUp,
+    resendConfirmationCode,
     signOut,
     getAccessToken,
     getIdToken,

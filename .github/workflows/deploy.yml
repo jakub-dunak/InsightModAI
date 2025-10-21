@@ -271,7 +271,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: agent-container
-          path: agent-container.tar.gz
+          path: .
 
       - name: Prepare deployment artifacts
         run: |

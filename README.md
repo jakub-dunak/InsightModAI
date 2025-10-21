@@ -92,7 +92,7 @@ aws cloudformation deploy \
   --parameter-overrides \
     EnvironmentName=dev \
     AdminEmail=admin@yourcompany.com \
-    BedrockModelId=us.anthropic.claude-3-5-sonnet-20241022-v2:0 \
+    BedrockModelId=amazon.titan-text-premier-v1:0 \
     CognitoDomainName=insightmodai-dev-$(openssl rand -hex 2) \
   --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
   --region us-west-2

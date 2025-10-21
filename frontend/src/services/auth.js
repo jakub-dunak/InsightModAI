@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { Auth } from 'aws-amplify';
+import { Auth, Hub } from 'aws-amplify';
 import toast from 'react-hot-toast';
 
 const AuthContext = createContext();
@@ -18,13 +18,40 @@ export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(null);
 
   useEffect(() => {
+    // Listen for authentication events
+    const unsubscribe = Hub.listen('auth', ({ payload: { event, data } }) => {
+      switch (event) {
+        case 'signIn':
+          checkAuthState();
+          break;
+        case 'signOut':
+          setUser(null);
+          setSession(null);
+          break;
+        case 'tokenRefresh':
+          checkAuthState();
+          break;
+        case 'tokenRefresh_failure':
+          console.error('Token refresh failed:', data);
+          // Optionally sign out user if token refresh fails
+          handleSignOut();
+          break;
+        default:
+          break;
+      }
+    });
+
+    // Initial check
     checkAuthState();
+
+    return unsubscribe;
   }, []);
 
   const checkAuthState = async () => {
     try {
       setLoading(true);
-      const currentUser = await Auth.currentAuthenticatedUser();
+      // Use getCurrentUser for better error handling in Amplify v5
+      const currentUser = await Auth.getCurrentUser();
       const currentSession = await Auth.currentSession();
       setUser(currentUser);
       setSession(currentSession);
@@ -55,12 +82,20 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const signOut = async () => {
+  const handleSignOut = async () => {
     try {
-      setLoading(true);
       await Auth.signOut();
       setUser(null);
       setSession(null);
+    } catch (error) {
+      console.error('Sign out error:', error);
+    }
+  };
+
+  const signOut = async () => {
+    try {
+      setLoading(true);
+      await handleSignOut();
       toast.success('Successfully signed out!');
     } catch (error) {
       console.error('Sign out error:', error);

@@ -95,7 +95,7 @@ aws cloudformation create-stack \
   --template-body file://cloudformation/template.yaml \
   --parameters \
     ParameterKey=AdminEmail,ParameterValue=admin@yourcompany.com \
-    ParameterKey=BedrockModelId,ParameterValue=us.anthropic.claude-3-5-sonnet-20241022-v2:0 \
+    ParameterKey=BedrockModelId,ParameterValue=amazon.titan-text-premier-v1:0 \
     ParameterKey=EnvironmentName,ParameterValue=prod \
     ParameterKey=EnableCRM,ParameterValue=false \
   --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
@@ -109,7 +109,7 @@ aws cloudformation update-stack \
   --template-body file://cloudformation/template.yaml \
   --parameters \
     ParameterKey=AdminEmail,ParameterValue=admin@yourcompany.com \
-    ParameterKey=BedrockModelId,ParameterValue=us.anthropic.claude-3-5-sonnet-20241022-v2:0 \
+    ParameterKey=BedrockModelId,ParameterValue=amazon.titan-text-premier-v1:0 \
     ParameterKey=EnvironmentName,ParameterValue=prod \
     ParameterKey=EnableCRM,ParameterValue=true \
   --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \

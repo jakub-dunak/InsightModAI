@@ -31,7 +31,7 @@ COPY insights_agent.py .
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"
-ENV BEDROCK_MODEL_ID="us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+ENV BEDROCK_MODEL_ID="amazon.titan-text-premier-v1:0"
 
 # Expose port for AgentCore Runtime
 EXPOSE 8080

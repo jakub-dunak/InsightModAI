@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -17,8 +17,15 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { signIn } = useAuth();
+  const { signIn, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate('/');
+    }
+  }, [user, authLoading, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,11 +36,47 @@ const Login = () => {
       await signIn(email, password);
       navigate('/');
     } catch (err) {
-      setError(err.message || 'Failed to sign in');
+      console.error('Login error:', err);
+
+      // Handle different types of authentication errors
+      let errorMessage = 'Failed to sign in';
+
+      if (err.name === 'UserNotFoundException') {
+        errorMessage = 'User does not exist. Please contact your administrator.';
+      } else if (err.name === 'NotAuthorizedException') {
+        errorMessage = 'Incorrect username or password.';
+      } else if (err.name === 'UserNotConfirmedException') {
+        errorMessage = 'Please check your email and confirm your account before signing in.';
+      } else if (err.name === 'TooManyRequestsException') {
+        errorMessage = 'Too many failed attempts. Please try again later.';
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
   };
+
+  // Show loading while checking authentication state
+  if (authLoading) {
+    return (
+      <Container component="main" maxWidth="xs">
+        <CssBaseline />
+        <Box
+          sx={{
+            marginTop: 8,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+          }}
+        >
+          <Typography variant="h6">Loading...</Typography>
+        </Box>
+      </Container>
+    );
+  }
 
   return (
     <Container component="main" maxWidth="xs">

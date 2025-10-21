@@ -53,7 +53,7 @@ aws cloudformation create-stack \
   --template-body file://cloudformation/template.yaml \
   --parameters \
     ParameterKey=AdminEmail,ParameterValue=admin@yourcompany.com \
-    ParameterKey=BedrockModelId,ParameterValue=us.anthropic.claude-3-5-sonnet-20241022-v2:0 \
+    ParameterKey=BedrockModelId,ParameterValue=amazon.titan-text-premier-v1:0 \
     ParameterKey=EnvironmentName,ParameterValue=prod \
     ParameterKey=EnableCRM,ParameterValue=false \
   --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
@@ -63,7 +63,7 @@ aws cloudformation create-stack \
 **Parameter Explanations:**
 
 - `AdminEmail`: Email address for the initial Cognito admin user
-- `BedrockModelId`: Bedrock model to use (Claude 3.5 Sonnet recommended)
+- `BedrockModelId`: Bedrock model to use (Amazon Titan Text Premier recommended)
 - `EnvironmentName`: Environment identifier (dev/staging/prod)
 - `EnableCRM`: Enable CRM integration (true/false)
 

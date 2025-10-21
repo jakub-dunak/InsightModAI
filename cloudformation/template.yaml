@@ -10,9 +10,12 @@ Parameters:
 
   BedrockModelId:
     Type: String
-    Default: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'
+    Default: 'amazon.titan-text-premier-v1:0'
     Description: Bedrock model ID to use for the Strands agent
     AllowedValues:
+      - 'amazon.titan-text-premier-v1:0'
+      - 'amazon.titan-text-express-v1'
+      - 'amazon.titan-text-lite-v1'
       - 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'
       - 'us.anthropic.claude-3-7-sonnet-20250219-v1:0'
       - 'us.amazon.nova-pro-v1:0'
@@ -335,6 +338,93 @@ Resources:
                 Resource:
                   - !GetAtt AgentConfigTable.Arn
 
+  ConfigManagerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-config-manager-${EnvironmentName}'
+      Runtime: python3.11
+      Handler: config_manager.lambda_handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub 'lambda/config-manager-${EnvironmentName}.zip'
+
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          STACK_NAME: !Ref AWS::StackName
+          ENVIRONMENT: !Ref EnvironmentName
+      Role: !GetAtt ConfigManagerFunctionRole.Arn
+
+  ConfigManagerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt AgentConfigTable.Arn
+
+  InsightsHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-insights-handler-${EnvironmentName}'
+      Runtime: python3.11
+      Handler: insights_handler.lambda_handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub 'lambda/insights-handler-${EnvironmentName}.zip'
+
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          STACK_NAME: !Ref AWS::StackName
+          ENVIRONMENT: !Ref EnvironmentName
+      Role: !GetAtt InsightsHandlerFunctionRole.Arn
+
+  InsightsHandlerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt FeedbackRecordsTable.Arn
+                  - !GetAtt SentimentAnalysisTable.Arn
+
   AgentDeploymentFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -487,7 +577,7 @@ Resources:
       Integration:
         Type: AWS
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentInvokerFunction.Arn}/invocations'
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${InsightsHandlerFunction.Arn}/invocations'
 
   AgentResource:
     Type: AWS::ApiGateway::Resource
@@ -515,6 +605,18 @@ Resources:
       ParentId: !GetAtt InsightModAIApi.RootResourceId
       PathPart: 'config'
 
+  ConfigGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref InsightModAIApi
+      ResourceId: !Ref ConfigResource
+      HttpMethod: GET
+      AuthorizationType: AWS_IAM  # Requires signed requests
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConfigManagerFunction.Arn}/invocations'
+
   ConfigPutMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -525,7 +627,7 @@ Resources:
       Integration:
         Type: AWS
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CRMIntegratorFunction.Arn}/invocations'
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConfigManagerFunction.Arn}/invocations'
 
   ApiGatewayRootMethod:
     Type: AWS::ApiGateway::Method
@@ -619,7 +721,7 @@ Resources:
         - StatusCode: 200
           ResponseParameters:
             method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-            method.response.header.Access-Control-Allow-Methods: "'PUT,OPTIONS'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,PUT,OPTIONS'"
             method.response.header.Access-Control-Allow-Origin: "'*'"
       Integration:
         Type: MOCK
@@ -629,7 +731,7 @@ Resources:
           - StatusCode: 200
             ResponseParameters:
               method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-              method.response.header.Access-Control-Allow-Methods: "'PUT,OPTIONS'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,PUT,OPTIONS'"
               method.response.header.Access-Control-Allow-Origin: "'*'"
 
 
@@ -639,6 +741,7 @@ Resources:
       - FeedbackPostMethod
       - InsightsGetMethod
       - AgentPostMethod
+      - ConfigGetMethod
       - ConfigPutMethod
     Properties:
       RestApiId: !Ref InsightModAIApi

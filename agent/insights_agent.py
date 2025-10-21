@@ -21,7 +21,7 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 app = BedrockAgentCoreApp()
 
 # Initialize Bedrock model (will be used by the Strands agent)
-model_id = os.getenv('BEDROCK_MODEL_ID', 'us.anthropic.claude-3-5-sonnet-20241022-v2:0')
+model_id = os.getenv('BEDROCK_MODEL_ID', 'amazon.titan-text-premier-v1:0')
 bedrock_model = BedrockModel(model_id=model_id)
 
 # Initialize AWS clients
@@ -70,15 +70,36 @@ def analyze_sentiment(feedback_text: str) -> Dict[str, Any]:
         try:
             response = bedrock_model.invoke(prompt)
 
-            # In a real implementation, parse the JSON response properly
-            # For this example, return a structured response
-            return {
-                "sentiment_score": 0.7,
-                "sentiment_label": "positive",
-                "confidence": 0.85,
-                "key_themes": ["service quality", "recommendation"],
-                "analysis_text": f"Analysis of: {feedback_text[:100]}..."
-            }
+            # Parse the Titan model response
+            # Titan models return: {"results": [{"outputText": "..."}]}
+            if hasattr(response, 'results') and response.results:
+                response_text = response.results[0].outputText
+            elif isinstance(response, dict) and 'results' in response:
+                response_text = response['results'][0]['outputText']
+            else:
+                # Fallback for other response formats
+                response_text = str(response)
+
+            # Parse the JSON response from the model
+            try:
+                sentiment_data = json.loads(response_text)
+                return {
+                    "sentiment_score": sentiment_data.get("sentiment_score", 0.5),
+                    "sentiment_label": sentiment_data.get("sentiment_label", "neutral"),
+                    "confidence": sentiment_data.get("confidence", 0.5),
+                    "key_themes": sentiment_data.get("key_themes", []),
+                    "analysis_text": f"Analysis of: {feedback_text[:100]}..."
+                }
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return a neutral response
+                return {
+                    "sentiment_score": 0.5,
+                    "sentiment_label": "neutral",
+                    "confidence": 0.1,
+                    "key_themes": ["parsing_error"],
+                    "analysis_text": f"Analysis of: {feedback_text[:100]}...",
+                    "raw_response": response_text
+                }
         except Exception as e:
             print(f"Error calling Bedrock model: {e}")
             # Return neutral sentiment on error

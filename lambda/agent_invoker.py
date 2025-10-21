@@ -136,7 +136,7 @@ def store_sentiment_analysis(feedback_id, agent_response):
             'sentiment_score': sentiment_score,
             'analysis_timestamp': boto3.client('dynamodb').meta.service_model.operation_model('PutItem').metadata['timestamp'],
             'agent_response': analysis_text,
-            'model_used': os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-3-5-sonnet-20241022-v2:0')
+            'model_used': os.environ.get('BEDROCK_MODEL_ID', 'amazon.titan-text-premier-v1:0')
         })
     except Exception as e:
         print(f"Error storing sentiment analysis: {e}")

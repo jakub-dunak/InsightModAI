@@ -13,7 +13,7 @@ export const useAPI = () => {
 };
 
 export const APIProvider = ({ children }) => {
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, signOut } = useAuth();
 
   const api = useMemo(() => {
     // Create axios instance
@@ -44,11 +44,15 @@ export const APIProvider = ({ children }) => {
     // Response interceptor for error handling
     instance.interceptors.response.use(
       (response) => response,
-      (error) => {
+      async (error) => {
         if (error.response?.status === 401) {
-          // Token expired or invalid
+          // Token expired or invalid - sign out user
           console.error('Unauthorized - token may be expired');
-          // You might want to trigger a logout here
+          try {
+            await signOut();
+          } catch (signOutError) {
+            console.error('Error during sign out:', signOutError);
+          }
         } else if (error.response?.status >= 500) {
           console.error('Server error:', error.response.data);
         } else if (error.code === 'ECONNABORTED') {
@@ -59,7 +63,7 @@ export const APIProvider = ({ children }) => {
     );
 
     return instance;
-  }, [getAccessToken]);
+  }, [getAccessToken, signOut]);
 
   const value = {
     api,

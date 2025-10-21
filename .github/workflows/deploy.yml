@@ -56,15 +56,12 @@ jobs:
       - name: Validate CloudFormation template
         id: validate
         run: |
-          echo "Validating CloudFormation template..."
           if aws cloudformation validate-template \
             --template-body file://cloudformation/template.yaml \
             --region us-west-2; then
             echo "valid=true" >> $GITHUB_OUTPUT
-            echo "✅ CloudFormation template is valid"
           else
             echo "valid=false" >> $GITHUB_OUTPUT
-            echo "❌ CloudFormation template validation failed"
             exit 1
           fi
 
@@ -177,28 +174,24 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role
           aws-region: us-west-2
 
-      - name: Setup S3 bucket for deployment artifacts
+      - name: Set deployment variables
         run: |
           ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
+          STACK_NAME="insightmodai-agent-${ENVIRONMENT}"
           BUCKET_NAME="insightmodai-deployment-us-west-2-${ENVIRONMENT}"
+
+          echo "ENVIRONMENT=${ENVIRONMENT}" >> $GITHUB_ENV
+          echo "STACK_NAME=${STACK_NAME}" >> $GITHUB_ENV
           echo "DEPLOYMENT_BUCKET=${BUCKET_NAME}" >> $GITHUB_ENV
 
-          # Check if bucket exists
-          if aws s3 ls s3://${BUCKET_NAME} --region us-west-2 2>/dev/null; then
-            echo "✅ Using existing deployment bucket: ${BUCKET_NAME}"
-          else
-            echo "📦 Creating new deployment bucket: ${BUCKET_NAME}"
-            if aws s3 mb s3://${BUCKET_NAME} --region us-west-2; then
-              echo "✅ Created deployment bucket: ${BUCKET_NAME}"
-            else
-              echo "❌ Failed to create deployment bucket"
-              exit 1
-            fi
-          fi
+      - name: Setup S3 bucket for deployment artifacts
+        run: |
+          # Check if bucket exists, create if not
+          aws s3 ls s3://${{ env.DEPLOYMENT_BUCKET }} --region us-west-2 >/dev/null 2>&1 || \
+          aws s3 mb s3://${{ env.DEPLOYMENT_BUCKET }} --region us-west-2
 
       - name: Package CloudFormation template
         run: |
-          echo "📦 Packaging CloudFormation template..."
           aws cloudformation package \
             --template-file cloudformation/template.yaml \
             --s3-bucket ${{ env.DEPLOYMENT_BUCKET }} \
@@ -207,66 +200,49 @@ jobs:
 
       - name: Package Lambda functions
         run: |
-          echo "📦 Packaging Lambda functions..."
-          ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
-
           # Package each Lambda function from lambda directory
           cd lambda
 
           # Package feedback-ingestion function
-          zip -r ../feedback-ingestion-${ENVIRONMENT}.zip feedback_ingestion.py
+          zip -r ../feedback-ingestion-${{ env.ENVIRONMENT }}.zip feedback_ingestion.py
 
           # Package agent-invoker function
-          zip -r ../agent-invoker-${ENVIRONMENT}.zip agent_invoker.py
+          zip -r ../agent-invoker-${{ env.ENVIRONMENT }}.zip agent_invoker.py
 
           # Package crm-integrator function
-          zip -r ../crm-integrator-${ENVIRONMENT}.zip crm_integrator.py
+          zip -r ../crm-integrator-${{ env.ENVIRONMENT }}.zip crm_integrator.py
 
           # Package agent-deployment function
-          zip -r ../agent-deployment-${ENVIRONMENT}.zip agent_deployment.py
+          zip -r ../agent-deployment-${{ env.ENVIRONMENT }}.zip agent_deployment.py
 
           cd ..
 
-          # Verify files exist
-          ls -la *-*.zip
-
           # Upload Lambda packages to S3
-          aws s3 cp feedback-ingestion-${ENVIRONMENT}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/feedback-ingestion-${ENVIRONMENT}.zip --region us-west-2
-          aws s3 cp agent-invoker-${ENVIRONMENT}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/agent-invoker-${ENVIRONMENT}.zip --region us-west-2
-          aws s3 cp crm-integrator-${ENVIRONMENT}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/crm-integrator-${ENVIRONMENT}.zip --region us-west-2
-          aws s3 cp agent-deployment-${ENVIRONMENT}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/agent-deployment-${ENVIRONMENT}.zip --region us-west-2
-
-          echo "✅ Lambda functions packaged and uploaded"
+          aws s3 cp feedback-ingestion-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/feedback-ingestion-${{ env.ENVIRONMENT }}.zip --region us-west-2
+          aws s3 cp agent-invoker-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/agent-invoker-${{ env.ENVIRONMENT }}.zip --region us-west-2
+          aws s3 cp crm-integrator-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/crm-integrator-${{ env.ENVIRONMENT }}.zip --region us-west-2
+          aws s3 cp agent-deployment-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/agent-deployment-${{ env.ENVIRONMENT }}.zip --region us-west-2
 
       - name: Deploy CloudFormation stack
         run: |
-          echo "🚀 Deploying CloudFormation stack..."
-          ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
-          STACK_NAME="insightmodai-agent-${ENVIRONMENT}"
-
           # Check if stack exists and get existing Cognito domain if available
-          if aws cloudformation describe-stacks --stack-name $STACK_NAME --region us-west-2 >/dev/null 2>&1; then
-            echo "📝 Stack $STACK_NAME exists, retrieving existing Cognito domain..."
-            
+          if aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region us-west-2 >/dev/null 2>&1; then
             # Get existing Cognito domain from stack parameters
             EXISTING_DOMAIN=$(aws cloudformation describe-stacks \
-              --stack-name $STACK_NAME \
+              --stack-name ${{ env.STACK_NAME }} \
               --region us-west-2 \
               --query 'Stacks[0].Parameters[?ParameterKey==`CognitoDomainName`].ParameterValue' \
               --output text 2>/dev/null || echo "")
-            
+
             if [ -n "$EXISTING_DOMAIN" ]; then
-              echo "✅ Reusing existing Cognito domain: $EXISTING_DOMAIN"
               COGNITO_DOMAIN="$EXISTING_DOMAIN"
             else
-              echo "⚠️ Could not retrieve existing domain, will generate new one"
               COGNITO_DOMAIN=""
             fi
-            
+
             OPERATION="update-stack"
             WAIT_OPERATION="stack-update-complete"
           else
-            echo "🆕 Creating new stack: $STACK_NAME"
             COGNITO_DOMAIN=""
             OPERATION="create-stack"
             WAIT_OPERATION="stack-create-complete"
@@ -274,68 +250,32 @@ jobs:
 
           # Generate unique Cognito domain if needed
           if [ -z "$COGNITO_DOMAIN" ]; then
-            echo "🔍 Generating unique Cognito domain..."
-            BASE_DOMAIN="insightmodai-${ENVIRONMENT}"
-            
-            # Try to find available domain
-            ATTEMPTS=0
-            MAX_ATTEMPTS=10
-            FOUND=false
-            
-            while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-              # Generate new timestamp and random suffix each time for uniqueness
-              TIMESTAMP=$(date +%s%N | cut -b1-13)  # milliseconds timestamp
-              RANDOM_SUFFIX=$(openssl rand -hex 4)  # 8 hex characters
-              COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP: -6}-${RANDOM_SUFFIX}"
-              
-              echo "🔍 Checking domain '$COGNITO_DOMAIN' (attempt $((ATTEMPTS + 1))/$MAX_ATTEMPTS)..."
+            BASE_DOMAIN="insightmodai-${{ env.ENVIRONMENT }}"
+            TIMESTAMP=$(date +%s)
+            RANDOM_SUFFIX=$(openssl rand -hex 4)
+            COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP}-${RANDOM_SUFFIX}"
 
-              # Check if domain exists
-              DOMAIN_CHECK=$(aws cognito-idp describe-user-pool-domain \
+            # Check if domain exists, retry up to 5 times if needed
+            for i in {1..5}; do
+              if aws cognito-idp describe-user-pool-domain \
                   --domain "$COGNITO_DOMAIN" \
-                  --region us-west-2 2>&1)
-              
-              # Check the result
-              if echo "$DOMAIN_CHECK" | grep -q "ResourceNotFoundException\|InvalidParameterException"; then
-                echo "✅ Domain '$COGNITO_DOMAIN' is available!"
-                FOUND=true
-                break
-              elif echo "$DOMAIN_CHECK" | grep -q '"DomainDescription":\s*{}'; then
-                echo "✅ Domain '$COGNITO_DOMAIN' is available (empty DomainDescription)!"
-                FOUND=true
-                break
-              elif echo "$DOMAIN_CHECK" | grep -q '"DomainDescription":\s*{[^}]*"Domain"'; then
-                echo "❌ Domain already exists, trying another..."
+                  --region us-west-2 >/dev/null 2>&1; then
+                # Domain exists, generate new one
+                TIMESTAMP=$(date +%s)
+                RANDOM_SUFFIX=$(openssl rand -hex 4)
+                COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP}-${RANDOM_SUFFIX}"
               else
-                echo "⚠️ Unexpected response, checking exit code..."
-                if [ $AWS_EXIT_CODE -eq 0 ]; then
-                  echo "✅ Assuming domain is available (exit code 0 but unexpected response)"
-                  FOUND=true
-                  break
-                else
-                  echo "❌ Assuming domain exists (non-zero exit code)"
-                fi
+                break
               fi
-              
-              ATTEMPTS=$((ATTEMPTS + 1))
-              sleep 1  # Brief pause to ensure timestamp changes
             done
-            
-            if [ "$FOUND" = false ]; then
-              echo "❌ Could not find available domain after $MAX_ATTEMPTS attempts."
-              echo "💡 Tip: This might indicate an AWS API issue or too many existing domains."
-              exit 1
-            fi
           fi
-
-          echo "🎯 Using Cognito domain: $COGNITO_DOMAIN"
 
           # Deploy the stack
           aws cloudformation $OPERATION \
-            --stack-name $STACK_NAME \
+            --stack-name ${{ env.STACK_NAME }} \
             --template-body file://packaged-template.yaml \
             --parameters \
-              ParameterKey=EnvironmentName,ParameterValue="${ENVIRONMENT}" \
+              ParameterKey=EnvironmentName,ParameterValue="${{ env.ENVIRONMENT }}" \
               ParameterKey=AdminEmail,ParameterValue="admin@insightmodai.com" \
               ParameterKey=BedrockModelId,ParameterValue="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
               ParameterKey=CognitoDomainName,ParameterValue="${COGNITO_DOMAIN}" \
@@ -343,12 +283,9 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
             --region us-west-2
 
-          echo "⏳ Waiting for stack operation to complete..."
           aws cloudformation wait $WAIT_OPERATION \
-            --stack-name $STACK_NAME \
+            --stack-name ${{ env.STACK_NAME }} \
             --region us-west-2
-
-          echo "✅ CloudFormation deployment completed successfully!"
 
       - name: Download frontend build
         uses: actions/download-artifact@v4
@@ -369,43 +306,29 @@ jobs:
 
       - name: Deploy frontend to Amplify
         run: |
-          echo "🌐 Deploying frontend to Amplify..."
-
           # Get Amplify App ID from CloudFormation outputs
           AMPLIFY_APP_ID=$(aws cloudformation describe-stacks \
-            --stack-name $STACK_NAME \
+            --stack-name ${{ env.STACK_NAME }} \
             --region us-west-2 \
             --query 'Stacks[0].Outputs[?OutputKey==`AmplifyAppId`].OutputValue' \
             --output text)
 
           if [ -z "$AMPLIFY_APP_ID" ]; then
-            echo "❌ Could not find Amplify App ID in CloudFormation outputs"
             exit 1
           fi
 
-          echo "📦 Uploading frontend build to S3..."
+          # Upload frontend build to S3 and deploy
           cd frontend-build
           zip -r ../frontend-build.zip .
           cd ..
           aws s3 cp frontend-build.zip s3://${{ env.DEPLOYMENT_BUCKET }}/frontend-build.zip --region us-west-2
 
-          echo "🚀 Starting Amplify deployment..."
           aws amplify start-deployment \
             --app-id $AMPLIFY_APP_ID \
             --branch-name main \
             --source-url "s3://${{ env.DEPLOYMENT_BUCKET }}/frontend-build.zip" \
             --region us-west-2
 
-      - name: Generate deployment summary
-        run: |
-          echo "📊 Deployment Summary"
-          echo "===================="
-          echo "Stack Name: $STACK_NAME"
-          echo "Region: us-west-2"
-          echo "Environment: $ENVIRONMENT"
-          echo "S3 Bucket: ${{ env.DEPLOYMENT_BUCKET }}"
-          echo ""
-          echo "✅ Deployment completed successfully!"
 
   # Cleanup on failure
   cleanup:
@@ -418,55 +341,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Load environment configuration for cleanup
-        id: cleanup-config
-        run: |
-          ENV="${{ github.event.inputs.environment || 'prod' }}"
-
-          if [ -f ".github/environments/${ENV}.yml" ]; then
-            STACK_NAME=$(grep 'stack_name:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*stack_name: *//' | tr -d '"' | tr -d "'")
-            AWS_REGION=$(grep 'region:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*region: *//' | tr -d '"' | tr -d "'")
-
-            echo "STACK_NAME=$STACK_NAME" >> $GITHUB_OUTPUT
-            echo "AWS_REGION_VAL=$AWS_REGION" >> $GITHUB_OUTPUT
-          else
-            echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
-            echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Set cleanup variables
-        run: |
-          echo "AWS_ROLE_TO_ASSUME=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role" >> $GITHUB_ENV
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
-          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ steps.cleanup-config.outputs.AWS_REGION_VAL }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role
+          aws-region: us-west-2
           audience: sts.amazonaws.com
 
       - name: Delete failed stack
         run: |
-          STACK_NAME="${{ steps.cleanup-config.outputs.STACK_NAME }}"
-          AWS_REGION="${{ steps.cleanup-config.outputs.AWS_REGION_VAL }}"
+          ENV="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
+          STACK_NAME="insightmodai-agent-${ENV}"
 
           if aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
-            --region "$AWS_REGION" >/dev/null 2>&1; then
-
-            echo "🗑️ Cleaning up failed deployment stack: $STACK_NAME"
+            --region us-west-2 >/dev/null 2>&1; then
 
             aws cloudformation delete-stack \
               --stack-name "$STACK_NAME" \
-              --region "$AWS_REGION"
+              --region us-west-2
 
             aws cloudformation wait stack-delete-complete \
               --stack-name "$STACK_NAME" \
-              --region "$AWS_REGION" || true
-
-            echo "✅ Stack cleanup completed"
-          else
-            echo "ℹ️ No stack to cleanup"
+              --region us-west-2 || true
           fi
 
   # Destroy stack (manual trigger only)
@@ -479,53 +376,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Load environment configuration for destroy
-        id: destroy-config
-        run: |
-          ENV="${{ github.event.inputs.environment }}"
-
-          if [ -f ".github/environments/${ENV}.yml" ]; then
-            STACK_NAME=$(grep 'stack_name:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*stack_name: *//' | tr -d '"' | tr -d "'")
-            AWS_REGION=$(grep 'region:' ".github/environments/${ENV}.yml" | head -1 | sed 's/.*region: *//' | tr -d '"' | tr -d "'")
-
-            echo "STACK_NAME=$STACK_NAME" >> $GITHUB_OUTPUT
-            echo "AWS_REGION_VAL=$AWS_REGION" >> $GITHUB_OUTPUT
-          else
-            echo "STACK_NAME=insightmodai-agent-$ENV" >> $GITHUB_OUTPUT
-            echo "AWS_REGION_VAL=us-west-2" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Set destroy variables
-        run: |
-          echo "AWS_ROLE_TO_ASSUME=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role" >> $GITHUB_ENV
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5.0.0
         with:
-          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ steps.destroy-config.outputs.AWS_REGION_VAL }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/personal-github-oidc-role
+          aws-region: us-west-2
           audience: sts.amazonaws.com
 
       - name: Delete CloudFormation stack
         run: |
-          STACK_NAME="${{ steps.destroy-config.outputs.STACK_NAME }}"
-          AWS_REGION="${{ steps.destroy-config.outputs.AWS_REGION_VAL }}"
-
-          echo "🗑️ Destroying stack: $STACK_NAME"
+          STACK_NAME="insightmodai-agent-${{ github.event.inputs.environment }}"
 
           if aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
-            --region "$AWS_REGION" >/dev/null 2>&1; then
+            --region us-west-2 >/dev/null 2>&1; then
 
             aws cloudformation delete-stack \
               --stack-name "$STACK_NAME" \
-              --region "$AWS_REGION"
+              --region us-west-2
 
             aws cloudformation wait stack-delete-complete \
               --stack-name "$STACK_NAME" \
-              --region "$AWS_REGION"
-
-            echo "✅ Stack destroyed successfully"
-          else
-            echo "ℹ️ Stack $STACK_NAME does not exist"
+              --region us-west-2
           fi

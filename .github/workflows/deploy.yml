@@ -233,11 +233,17 @@ jobs:
 
       - name: Deploy CloudFormation stack
         run: |
-          # Generate a simple, predictable Cognito domain name
-          COGNITO_DOMAIN="insightmodai-${{ env.ENVIRONMENT }}-${{ github.run_id }}"
+          # Generate deterministic Cognito domain prefix
+          ENVIRONMENT="${{ env.ENVIRONMENT }}"
+          REPO_NAME="InsightModAI"
+
+          # Create deterministic suffix based on account ID and repo name
+          DETERMINISTIC_SUFFIX=$(echo "${{ secrets.AWS_ACCOUNT_ID }}${REPO_NAME}" | md5sum | head -c 8 | tr '[:upper:]' '[:lower:]')
+          COGNITO_PREFIX="insightmodai-${DETERMINISTIC_SUFFIX}"
+
+          echo "Using Cognito domain: ${COGNITO_PREFIX}-${ENVIRONMENT}"
 
           echo "Deploying CloudFormation stack: ${{ env.STACK_NAME }}"
-          echo "Using Cognito domain: $COGNITO_DOMAIN"
 
           # Use aws cloudformation deploy which handles create/update automatically
           aws cloudformation deploy \
@@ -247,7 +253,7 @@ jobs:
               EnvironmentName="${{ env.ENVIRONMENT }}" \
               AdminEmail="admin@insightmodai.com" \
               BedrockModelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
-              CognitoDomainName="$COGNITO_DOMAIN" \
+              CognitoDomainName="${COGNITO_PREFIX}-${ENVIRONMENT}" \
               LambdaCodeBucket="${{ env.DEPLOYMENT_BUCKET }}" \
             --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
             --region us-west-2 \

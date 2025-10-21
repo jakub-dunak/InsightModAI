@@ -292,7 +292,7 @@ jobs:
           # Deploy the stack
           if [ "$OPERATION" = "create-stack" ] || [ "$OPERATION" = "update-stack" ]; then
             echo "Deploying stack..."
-            if aws cloudformation $OPERATION \
+            OUTPUT=$(aws cloudformation $OPERATION \
               --stack-name ${{ env.STACK_NAME }} \
               --template-body file://packaged-template.yaml \
               --parameters \
@@ -302,8 +302,9 @@ jobs:
                 ParameterKey=CognitoDomainName,ParameterValue="${COGNITO_DOMAIN}" \
                 ParameterKey=LambdaCodeBucket,ParameterValue="${{ env.DEPLOYMENT_BUCKET }}" \
               --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
-              --region us-west-2; then
+              --region us-west-2 2>&1)
 
+            if [ $? -eq 0 ]; then
               echo "Stack $OPERATION initiated successfully, waiting for completion..."
               if aws cloudformation wait $WAIT_OPERATION \
                 --stack-name ${{ env.STACK_NAME }} \
@@ -314,8 +315,15 @@ jobs:
                 exit 1
               fi
             else
-              echo "Error: Failed to initiate stack $OPERATION"
-              exit 1
+              # Check if this is the "No updates are to be performed" error
+              if echo "$OUTPUT" | grep -q "No updates are to be performed"; then
+                echo "Stack is already up to date - no changes needed"
+                echo "Stack deployment completed successfully"
+              else
+                echo "Error: Failed to initiate stack $OPERATION"
+                echo "$OUTPUT"
+                exit 1
+              fi
             fi
           fi
 

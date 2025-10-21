@@ -546,12 +546,24 @@ Resources:
       ResourceId: !Ref FeedbackResource
       HttpMethod: POST
       AuthorizationType: NONE  # Public endpoint for feedback submission
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+        - StatusCode: 400
+        - StatusCode: 500
       Integration:
         Type: AWS
         IntegrationHttpMethod: POST
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FeedbackIngestionFunction.Arn}/invocations'
         IntegrationResponses:
           - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
             ResponseTemplates:
               application/json: |
                 #set($inputRoot = $input.path('$'))
@@ -559,6 +571,8 @@ Resources:
                   "feedback_id": "$inputRoot.feedback_id",
                   "status": "processed"
                 }
+          - StatusCode: 400
+          - StatusCode: 500
 
   InsightsResource:
     Type: AWS::ApiGateway::Resource
@@ -574,10 +588,25 @@ Resources:
       ResourceId: !Ref InsightsResource
       HttpMethod: GET
       AuthorizationType: AWS_IAM  # Requires signed requests
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+        - StatusCode: 401
+        - StatusCode: 403
+        - StatusCode: 500
       Integration:
         Type: AWS
         IntegrationHttpMethod: POST
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${InsightsHandlerFunction.Arn}/invocations'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
 
   AgentResource:
     Type: AWS::ApiGateway::Resource
@@ -593,10 +622,25 @@ Resources:
       ResourceId: !Ref AgentResource
       HttpMethod: POST
       AuthorizationType: AWS_IAM  # Requires signed requests
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+        - StatusCode: 401
+        - StatusCode: 403
+        - StatusCode: 500
       Integration:
         Type: AWS
         IntegrationHttpMethod: POST
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentInvokerFunction.Arn}/invocations'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
 
   ConfigResource:
     Type: AWS::ApiGateway::Resource
@@ -612,10 +656,25 @@ Resources:
       ResourceId: !Ref ConfigResource
       HttpMethod: GET
       AuthorizationType: AWS_IAM  # Requires signed requests
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,PUT,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+        - StatusCode: 401
+        - StatusCode: 403
+        - StatusCode: 500
       Integration:
         Type: AWS
         IntegrationHttpMethod: POST
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConfigManagerFunction.Arn}/invocations'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,PUT,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
 
   ConfigPutMethod:
     Type: AWS::ApiGateway::Method
@@ -624,10 +683,30 @@ Resources:
       ResourceId: !Ref ConfigResource
       HttpMethod: PUT
       AuthorizationType: AWS_IAM  # Requires signed requests
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,PUT,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+        - StatusCode: 400
+        - StatusCode: 401
+        - StatusCode: 403
+        - StatusCode: 500
       Integration:
         Type: AWS
         IntegrationHttpMethod: POST
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConfigManagerFunction.Arn}/invocations'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,PUT,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+          - StatusCode: 400
+          - StatusCode: 401
+          - StatusCode: 403
+          - StatusCode: 500
 
   ApiGatewayRootMethod:
     Type: AWS::ApiGateway::Method
@@ -636,6 +715,35 @@ Resources:
       ResourceId: !GetAtt InsightModAIApi.RootResourceId
       HttpMethod: ANY
       AuthorizationType: NONE
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: |
+                {
+                  "message": "InsightModAI Agent API",
+                  "version": "1.0",
+                  "endpoints": {
+                    "POST /feedback": "Submit customer feedback",
+                    "GET /insights": "Retrieve processed insights (requires authentication)",
+                    "POST /agent": "Invoke AI agent (requires authentication)",
+                    "GET /config": "Get configuration (requires authentication)",
+                    "PUT /config": "Update configuration (requires authentication)"
+                  }
+                }
 
   # CORS Support
   OptionsFeedbackMethod:
@@ -735,6 +843,39 @@ Resources:
               method.response.header.Access-Control-Allow-Origin: "'*'"
 
 
+  # Lambda Permissions for API Gateway
+  FeedbackIngestionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FeedbackIngestionFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:apigateway:${AWS::Region}::/restapis/${InsightModAIApi}/*'
+
+  InsightsHandlerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref InsightsHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:apigateway:${AWS::Region}::/restapis/${InsightModAIApi}/*'
+
+  AgentInvokerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AgentInvokerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:apigateway:${AWS::Region}::/restapis/${InsightModAIApi}/*'
+
+  ConfigManagerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ConfigManagerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:apigateway:${AWS::Region}::/restapis/${InsightModAIApi}/*'
+
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
@@ -743,6 +884,15 @@ Resources:
       - AgentPostMethod
       - ConfigGetMethod
       - ConfigPutMethod
+      - ApiGatewayRootMethod
+      - OptionsFeedbackMethod
+      - OptionsInsightsMethod
+      - OptionsAgentMethod
+      - OptionsConfigMethod
+      - FeedbackIngestionPermission
+      - InsightsHandlerPermission
+      - AgentInvokerPermission
+      - ConfigManagerPermission
     Properties:
       RestApiId: !Ref InsightModAIApi
       StageName: !Ref EnvironmentName

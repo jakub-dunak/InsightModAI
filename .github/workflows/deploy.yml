@@ -91,15 +91,15 @@ jobs:
         working-directory: frontend
         run: npm test -- --watchAll=false --coverage || echo "Tests completed with warnings"
 
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
-
-      - name: Upload frontend build artifacts
+      - name: Upload frontend source
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-build
-          path: frontend/build/
+          name: frontend-source
+          path: |
+            frontend/src/
+            frontend/public/
+            frontend/package.json
+            frontend/package-lock.json
           retention-days: 7
 
   # Build and test agent container
@@ -164,7 +164,7 @@ jobs:
   package-and-deploy:
     name: Package and Deploy Infrastructure
     runs-on: ubuntu-latest
-    needs: [validate, frontend, agent]
+    needs: [validate, agent]
     if: needs.validate.outputs.template-valid == 'true'
     environment:
       name: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
@@ -286,16 +286,23 @@ jobs:
           echo "user-pool-id=$USER_POOL_ID" >> $GITHUB_OUTPUT
           echo "user-pool-client-id=$USER_POOL_CLIENT_ID" >> $GITHUB_OUTPUT
 
-      - name: Download frontend build
+      - name: Download frontend source
         uses: actions/download-artifact@v4
         with:
-          name: frontend-build
-          path: frontend-build/
+          name: frontend-source
+          path: frontend-source/
 
       - name: Configure frontend with Cognito values
-        working-directory: frontend-build
+        working-directory: frontend-source
         run: |
           node ../scripts/configure-frontend.js "${{ steps.get-cognito-outputs.outputs.user-pool-id }}" "${{ steps.get-cognito-outputs.outputs.user-pool-client-id }}" "us-west-2" "${{ env.ENVIRONMENT }}"
+
+      - name: Install dependencies and build configured frontend
+        working-directory: frontend-source
+        run: |
+          npm install
+          npm run build
+          cp -r build ../frontend-build
 
       - name: Download agent container
         uses: actions/download-artifact@v4
@@ -311,9 +318,9 @@ jobs:
           gunzip agent-container.tar.gz
           docker load < agent-container.tar
 
-          # Prepare frontend build
+          # Prepare configured frontend build (already built with correct aws-exports.js)
           cd frontend-build
-          zip -r ../frontend-build.zip .
+          zip -r ../frontend-deployment.zip .
           cd ..
 
       - name: Deploy frontend to Amplify
@@ -340,11 +347,6 @@ jobs:
 
           echo "Deploying frontend to Amplify app: $AMPLIFY_APP_ID"
 
-          # Create a deployment package from the frontend build
-          cd frontend-build
-          zip -r ../amplify-deployment.zip .
-          cd ..
-
           # Create deployment
           DEPLOYMENT_OUTPUT=$(aws amplify create-deployment \
             --app-id "$AMPLIFY_APP_ID" \
@@ -363,7 +365,7 @@ jobs:
             if curl -X PUT "$UPLOAD_URL" \
               -H "Content-Type: application/zip" \
               --max-time 300 \
-              --data-binary @amplify-deployment.zip; then
+              --data-binary @frontend-deployment.zip; then
               break
             else
               RETRY_COUNT=$((RETRY_COUNT + 1))

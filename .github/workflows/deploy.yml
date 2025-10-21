@@ -256,86 +256,295 @@ jobs:
             WAIT_OPERATION="stack-create-complete"
           fi
 
-          # Generate unique Cognito domain if needed
+          # Generate unique Cognito domain if needed (only for new stacks)
           if [ -z "$COGNITO_DOMAIN" ]; then
             BASE_DOMAIN="insightmodai-${{ env.ENVIRONMENT }}"
             TIMESTAMP=$(date +%s)
             RANDOM_SUFFIX=$(openssl rand -hex 4)
             COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP}-${RANDOM_SUFFIX}"
 
-            # Check if domain exists, retry up to 5 times if needed
-            for i in {1..5}; do
+            # Ensure domain uniqueness by checking if it exists
+            MAX_ATTEMPTS=5
+            for attempt in $(seq 1 $MAX_ATTEMPTS); do
               if aws cognito-idp describe-user-pool-domain \
                   --domain "$COGNITO_DOMAIN" \
                   --region us-west-2 >/dev/null 2>&1; then
-                # Domain exists, generate new one
+                echo "Domain $COGNITO_DOMAIN already exists, generating new one (attempt $attempt/$MAX_ATTEMPTS)"
                 TIMESTAMP=$(date +%s)
                 RANDOM_SUFFIX=$(openssl rand -hex 4)
                 COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP}-${RANDOM_SUFFIX}"
               else
+                echo "Using available domain: $COGNITO_DOMAIN"
                 break
               fi
             done
+
+            if [ "${attempt}" -eq "${MAX_ATTEMPTS}" ] && aws cognito-idp describe-user-pool-domain \
+                --domain "$COGNITO_DOMAIN" \
+                --region us-west-2 >/dev/null 2>&1; then
+              echo "Failed to find unique domain after $MAX_ATTEMPTS attempts"
+              exit 1
+            fi
+          else
+            echo "Using existing Cognito domain: $COGNITO_DOMAIN"
           fi
 
-          # Deploy the stack
-          aws cloudformation $OPERATION \
-            --stack-name ${{ env.STACK_NAME }} \
-            --template-body file://packaged-template.yaml \
-            --parameters \
-              ParameterKey=EnvironmentName,ParameterValue="${{ env.ENVIRONMENT }}" \
-              ParameterKey=AdminEmail,ParameterValue="admin@insightmodai.com" \
-              ParameterKey=BedrockModelId,ParameterValue="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
-              ParameterKey=CognitoDomainName,ParameterValue="${COGNITO_DOMAIN}" \
-              ParameterKey=LambdaCodeBucket,ParameterValue="${{ env.DEPLOYMENT_BUCKET }}" \
-            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
-            --region us-west-2
+          # Check for changes before deploying (only for updates)
+          if [ "$OPERATION" = "update-stack" ]; then
+            echo "Checking for stack changes..."
 
-          aws cloudformation wait $WAIT_OPERATION \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region us-west-2
+            # Create a change set to detect if there are any changes
+            CHANGE_SET_NAME="changeset-$(date +%s)"
+
+            if aws cloudformation create-change-set \
+              --stack-name ${{ env.STACK_NAME }} \
+              --change-set-name "$CHANGE_SET_NAME" \
+              --template-body file://packaged-template.yaml \
+              --parameters \
+                ParameterKey=EnvironmentName,ParameterValue="${{ env.ENVIRONMENT }}" \
+                ParameterKey=AdminEmail,ParameterValue="admin@insightmodai.com" \
+                ParameterKey=BedrockModelId,ParameterValue="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
+                ParameterKey=CognitoDomainName,ParameterValue="${COGNITO_DOMAIN}" \
+                ParameterKey=LambdaCodeBucket,ParameterValue="${{ env.DEPLOYMENT_BUCKET }}" \
+              --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
+              --region us-west-2; then
+
+              echo "Change set created successfully, waiting for completion..."
+
+              # Wait for change set creation to complete with timeout
+              if aws cloudformation wait change-set-create-complete \
+                --stack-name ${{ env.STACK_NAME }} \
+                --change-set-name "$CHANGE_SET_NAME" \
+                --region us-west-2; then
+
+                # Check if change set has any changes
+                if CHANGES_COUNT=$(aws cloudformation describe-change-set \
+                  --stack-name ${{ env.STACK_NAME }} \
+                  --change-set-name "$CHANGE_SET_NAME" \
+                  --region us-west-2 \
+                  --query 'length(Changes)' \
+                  --output text 2>/dev/null); then
+
+                  if [ "$CHANGES_COUNT" = "0" ]; then
+                    echo "No changes detected in stack, skipping deployment"
+                    echo "SKIP_DEPLOYMENT=true" >> $GITHUB_ENV
+                  else
+                    echo "Found $CHANGES_COUNT change(s) in stack, proceeding with deployment"
+                    echo "SKIP_DEPLOYMENT=false" >> $GITHUB_ENV
+                  fi
+                else
+                  echo "Warning: Could not determine change count, proceeding with deployment to be safe"
+                  echo "SKIP_DEPLOYMENT=false" >> $GITHUB_ENV
+                fi
+              else
+                echo "Warning: Change set creation failed or timed out, proceeding with deployment"
+                echo "SKIP_DEPLOYMENT=false" >> $GITHUB_ENV
+              fi
+            else
+              echo "Warning: Failed to create change set, proceeding with deployment"
+              echo "SKIP_DEPLOYMENT=false" >> $GITHUB_ENV
+            fi
+
+            # Clean up the change set (ignore errors)
+            aws cloudformation delete-change-set \
+              --stack-name ${{ env.STACK_NAME }} \
+              --change-set-name "$CHANGE_SET_NAME" \
+              --region us-west-2 2>/dev/null || true
+          fi
+
+          # Deploy the stack if not skipping
+          if [ "$OPERATION" = "create-stack" ] || [ "$SKIP_DEPLOYMENT" != "true" ]; then
+            echo "Deploying stack..."
+            if aws cloudformation $OPERATION \
+              --stack-name ${{ env.STACK_NAME }} \
+              --template-body file://packaged-template.yaml \
+              --parameters \
+                ParameterKey=EnvironmentName,ParameterValue="${{ env.ENVIRONMENT }}" \
+                ParameterKey=AdminEmail,ParameterValue="admin@insightmodai.com" \
+                ParameterKey=BedrockModelId,ParameterValue="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
+                ParameterKey=CognitoDomainName,ParameterValue="${COGNITO_DOMAIN}" \
+                ParameterKey=LambdaCodeBucket,ParameterValue="${{ env.DEPLOYMENT_BUCKET }}" \
+              --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
+              --region us-west-2; then
+
+              echo "Stack $OPERATION initiated successfully, waiting for completion..."
+              if aws cloudformation wait $WAIT_OPERATION \
+                --stack-name ${{ env.STACK_NAME }} \
+                --region us-west-2; then
+                echo "Stack deployment completed successfully"
+              else
+                echo "Error: Stack deployment failed during wait operation"
+                exit 1
+              fi
+            else
+              echo "Error: Failed to initiate stack $OPERATION"
+              exit 1
+            fi
+          else
+            echo "Skipping stack deployment - no changes detected"
+          fi
 
       - name: Download frontend build
+        if: env.SKIP_DEPLOYMENT != 'true'
         uses: actions/download-artifact@v4
         with:
           name: frontend-build
           path: frontend-build/
 
       - name: Download agent container
+        if: env.SKIP_DEPLOYMENT != 'true'
         uses: actions/download-artifact@v4
         with:
           name: agent-container
           path: agent-container.tar.gz
 
-      - name: Load agent container
+      - name: Prepare deployment artifacts
+        if: env.SKIP_DEPLOYMENT != 'true'
         run: |
+          echo "Preparing deployment artifacts..."
+
+          # Load agent container
           gunzip agent-container.tar.gz
           docker load < agent-container.tar
 
-      - name: Deploy frontend to Amplify
-        run: |
-          # Get Amplify App ID from CloudFormation outputs
-          AMPLIFY_APP_ID=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region us-west-2 \
-            --query 'Stacks[0].Outputs[?OutputKey==`AmplifyAppId`].OutputValue' \
-            --output text)
-
-          if [ -z "$AMPLIFY_APP_ID" ]; then
-            exit 1
-          fi
-
-          # Upload frontend build to S3 and deploy
+          # Prepare frontend build
           cd frontend-build
           zip -r ../frontend-build.zip .
           cd ..
-          aws s3 cp frontend-build.zip s3://${{ env.DEPLOYMENT_BUCKET }}/frontend-build.zip --region us-west-2
 
-          aws amplify start-deployment \
+      - name: Deploy frontend to Amplify
+        if: env.SKIP_DEPLOYMENT != 'true'
+        run: |
+          echo "Starting frontend deployment to Amplify..."
+
+          # Get Amplify App ID from CloudFormation outputs
+          if ! AMPLIFY_APP_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region us-west-2 \
+            --query 'Stacks[0].Outputs[?OutputKey==`AmplifyAppId`].OutputValue' \
+            --output text 2>/dev/null); then
+            echo "Error: Could not retrieve Amplify App ID from stack outputs"
+            exit 1
+          fi
+
+          if [ -z "$AMPLIFY_APP_ID" ] || [ "$AMPLIFY_APP_ID" = "None" ]; then
+            echo "Error: Amplify App ID is empty or not found in stack outputs"
+            exit 1
+          fi
+
+          echo "Deploying frontend to Amplify app: $AMPLIFY_APP_ID"
+
+          # Upload frontend build to S3
+          if ! aws s3 cp frontend-build.zip s3://${{ env.DEPLOYMENT_BUCKET }}/frontend-build.zip --region us-west-2; then
+            echo "Error: Failed to upload frontend build to S3"
+            exit 1
+          fi
+
+          # Start Amplify deployment (bucket-based deployment)
+          DEPLOYMENT_JOB_ID=$(aws amplify start-deployment \
             --app-id $AMPLIFY_APP_ID \
-            --branch-name main \
             --source-url "s3://${{ env.DEPLOYMENT_BUCKET }}/frontend-build.zip" \
-            --region us-west-2
+            --source-url-type ZIP \
+            --region us-west-2 \
+            --query 'jobSummary.jobId' \
+            --output text)
+
+          if [ -z "$DEPLOYMENT_JOB_ID" ] || [ "$DEPLOYMENT_JOB_ID" = "None" ]; then
+            echo "Error: Failed to start Amplify deployment"
+            exit 1
+          fi
+
+          echo "Frontend deployment started successfully with job ID: $DEPLOYMENT_JOB_ID"
+
+          # Wait for deployment completion
+          echo "Waiting for Amplify deployment to complete..."
+          MAX_WAIT_TIME=900  # 15 minutes
+          WAIT_TIME=0
+          SLEEP_INTERVAL=30
+
+          while [ $WAIT_TIME -lt $MAX_WAIT_TIME ]; do
+            JOB_STATUS=$(aws amplify get-job \
+              --app-id $AMPLIFY_APP_ID \
+              --branch-name main \
+              --job-id $DEPLOYMENT_JOB_ID \
+              --region us-west-2 \
+              --query 'job.summary.status' \
+              --output text 2>/dev/null || echo "UNKNOWN")
+
+            echo "Deployment status: $JOB_STATUS (waited ${WAIT_TIME}s)"
+
+            case $JOB_STATUS in
+              "SUCCEED")
+                echo "Frontend deployment completed successfully"
+                break
+                ;;
+              "FAILED"|"FAULT")
+                echo "Error: Frontend deployment failed with status: $JOB_STATUS"
+                exit 1
+                ;;
+              "CANCELLED")
+                echo "Error: Frontend deployment was cancelled"
+                exit 1
+                ;;
+              *)
+                sleep $SLEEP_INTERVAL
+                WAIT_TIME=$((WAIT_TIME + SLEEP_INTERVAL))
+                ;;
+            esac
+          done
+
+          if [ $WAIT_TIME -ge $MAX_WAIT_TIME ]; then
+            echo "Error: Frontend deployment timed out after ${MAX_WAIT_TIME}s"
+            exit 1
+          fi
+
+      - name: Deploy agent container
+        if: env.SKIP_DEPLOYMENT != 'true'
+        run: |
+          echo "Starting agent container deployment..."
+
+          # Load container image
+          if ! docker load < agent-container.tar; then
+            echo "Error: Failed to load agent container image"
+            exit 1
+          fi
+
+          # Get ECR repository URI from CloudFormation outputs
+          if ! ECR_URI=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region us-west-2 \
+            --query 'Stacks[0].Outputs[?OutputKey==`ECRRepositoryUri`].OutputValue' \
+            --output text 2>/dev/null); then
+            echo "Error: Could not retrieve ECR repository URI from stack outputs"
+            exit 1
+          fi
+
+          if [ -z "$ECR_URI" ] || [ "$ECR_URI" = "None" ]; then
+            echo "Error: ECR repository URI is empty or not found in stack outputs"
+            exit 1
+          fi
+
+          echo "Deploying to ECR repository: $ECR_URI"
+
+          # Tag the container
+          if ! docker tag insightmodai-agent:latest $ECR_URI:latest; then
+            echo "Error: Failed to tag container image"
+            exit 1
+          fi
+
+          # Login to ECR
+          if ! aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin $ECR_URI; then
+            echo "Error: Failed to login to ECR"
+            exit 1
+          fi
+
+          # Push the container
+          if ! docker push $ECR_URI:latest; then
+            echo "Error: Failed to push container to ECR"
+            exit 1
+          fi
+
+          echo "Agent container deployed successfully to: $ECR_URI:latest"
 
 
   # Cleanup on failure

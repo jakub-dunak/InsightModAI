@@ -233,99 +233,27 @@ jobs:
 
       - name: Deploy CloudFormation stack
         run: |
-          # Check if stack exists and get existing Cognito domain if available
-          if aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region us-west-2 >/dev/null 2>&1; then
-            # Get existing Cognito domain from stack parameters
-            EXISTING_DOMAIN=$(aws cloudformation describe-stacks \
-              --stack-name ${{ env.STACK_NAME }} \
-              --region us-west-2 \
-              --query 'Stacks[0].Parameters[?ParameterKey==`CognitoDomainName`].ParameterValue' \
-              --output text 2>/dev/null || echo "")
+          # Generate a simple, predictable Cognito domain name
+          COGNITO_DOMAIN="insightmodai-${{ env.ENVIRONMENT }}-${{ github.run_id }}"
 
-            if [ -n "$EXISTING_DOMAIN" ]; then
-              COGNITO_DOMAIN="$EXISTING_DOMAIN"
-            else
-              COGNITO_DOMAIN=""
-            fi
+          echo "Deploying CloudFormation stack: ${{ env.STACK_NAME }}"
+          echo "Using Cognito domain: $COGNITO_DOMAIN"
 
-            OPERATION="update-stack"
-            WAIT_OPERATION="stack-update-complete"
-          else
-            COGNITO_DOMAIN=""
-            OPERATION="create-stack"
-            WAIT_OPERATION="stack-create-complete"
-          fi
+          # Use aws cloudformation deploy which handles create/update automatically
+          aws cloudformation deploy \
+            --stack-name ${{ env.STACK_NAME }} \
+            --template-file packaged-template.yaml \
+            --parameter-overrides \
+              EnvironmentName="${{ env.ENVIRONMENT }}" \
+              AdminEmail="admin@insightmodai.com" \
+              BedrockModelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
+              CognitoDomainName="$COGNITO_DOMAIN" \
+              LambdaCodeBucket="${{ env.DEPLOYMENT_BUCKET }}" \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
+            --region us-west-2 \
+            --no-fail-on-empty-changeset
 
-          # Generate unique Cognito domain if needed (only for new stacks)
-          if [ -z "$COGNITO_DOMAIN" ]; then
-            BASE_DOMAIN="insightmodai-${{ env.ENVIRONMENT }}"
-            TIMESTAMP=$(date +%s)
-            RANDOM_SUFFIX=$(openssl rand -hex 4)
-            COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP}-${RANDOM_SUFFIX}"
-
-            # Ensure domain uniqueness by checking if it exists
-            MAX_ATTEMPTS=5
-            for attempt in $(seq 1 $MAX_ATTEMPTS); do
-              if aws cognito-idp describe-user-pool-domain \
-                  --domain "$COGNITO_DOMAIN" \
-                  --region us-west-2 >/dev/null 2>&1; then
-                echo "Domain $COGNITO_DOMAIN already exists, generating new one (attempt $attempt/$MAX_ATTEMPTS)"
-                TIMESTAMP=$(date +%s)
-                RANDOM_SUFFIX=$(openssl rand -hex 4)
-                COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP}-${RANDOM_SUFFIX}"
-              else
-                echo "Using available domain: $COGNITO_DOMAIN"
-                break
-              fi
-            done
-
-            if [ "${attempt}" -eq "${MAX_ATTEMPTS}" ] && aws cognito-idp describe-user-pool-domain \
-                --domain "$COGNITO_DOMAIN" \
-                --region us-west-2 >/dev/null 2>&1; then
-              echo "Failed to find unique domain after $MAX_ATTEMPTS attempts"
-              exit 1
-            fi
-          else
-            echo "Using existing Cognito domain: $COGNITO_DOMAIN"
-          fi
-
-          # Deploy the stack
-          if [ "$OPERATION" = "create-stack" ] || [ "$OPERATION" = "update-stack" ]; then
-            echo "Deploying stack..."
-            OUTPUT=$(aws cloudformation $OPERATION \
-              --stack-name ${{ env.STACK_NAME }} \
-              --template-body file://packaged-template.yaml \
-              --parameters \
-                ParameterKey=EnvironmentName,ParameterValue="${{ env.ENVIRONMENT }}" \
-                ParameterKey=AdminEmail,ParameterValue="admin@insightmodai.com" \
-                ParameterKey=BedrockModelId,ParameterValue="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
-                ParameterKey=CognitoDomainName,ParameterValue="${COGNITO_DOMAIN}" \
-                ParameterKey=LambdaCodeBucket,ParameterValue="${{ env.DEPLOYMENT_BUCKET }}" \
-              --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
-              --region us-west-2 2>&1)
-
-            if [ $? -eq 0 ]; then
-              echo "Stack $OPERATION initiated successfully, waiting for completion..."
-              if aws cloudformation wait $WAIT_OPERATION \
-                --stack-name ${{ env.STACK_NAME }} \
-                --region us-west-2; then
-                echo "Stack deployment completed successfully"
-              else
-                echo "Error: Stack deployment failed during wait operation"
-                exit 1
-              fi
-            else
-              # Check if this is the "No updates are to be performed" error
-              if echo "$OUTPUT" | grep -q "No updates are to be performed"; then
-                echo "Stack is already up to date - no changes needed"
-                echo "Stack deployment completed successfully"
-              else
-                echo "Error: Failed to initiate stack $OPERATION"
-                echo "$OUTPUT"
-                exit 1
-              fi
-            fi
-          fi
+          echo "Stack deployment completed successfully"
 
       - name: Download frontend build
         uses: actions/download-artifact@v4

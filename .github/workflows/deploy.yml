@@ -332,68 +332,67 @@ jobs:
 
           echo "Deploying frontend to Amplify app: $AMPLIFY_APP_ID"
 
-          # Upload frontend build to S3
-          if ! aws s3 cp frontend-build.zip s3://${{ env.DEPLOYMENT_BUCKET }}/frontend-build.zip --region us-west-2; then
-            echo "Error: Failed to upload frontend build to S3"
-            exit 1
-          fi
+          # Create a deployment package from the frontend build
+          cd frontend-build
+          zip -r ../amplify-deployment.zip .
+          cd ..
 
-          # Start Amplify deployment (bucket-based deployment)
-          DEPLOYMENT_JOB_ID=$(aws amplify start-deployment \
-            --app-id $AMPLIFY_APP_ID \
-            --branch-name main \
-            --source-url "s3://${{ env.DEPLOYMENT_BUCKET }}/frontend-build.zip" \
-            --source-url-type ZIP \
+          # Create deployment
+          DEPLOYMENT_OUTPUT=$(aws amplify create-deployment \
+            --app-id "$AMPLIFY_APP_ID" \
+            --branch-name "main" \
             --region us-west-2 \
-            --query 'jobSummary.jobId' \
-            --output text)
+            --output json)
 
-          if [ -z "$DEPLOYMENT_JOB_ID" ] || [ "$DEPLOYMENT_JOB_ID" = "None" ]; then
-            echo "Error: Failed to start Amplify deployment"
-            exit 1
-          fi
+          UPLOAD_URL=$(echo "$DEPLOYMENT_OUTPUT" | jq -r '.zipUploadUrl')
+          JOB_ID=$(echo "$DEPLOYMENT_OUTPUT" | jq -r '.jobId')
 
-          echo "Frontend deployment started successfully with job ID: $DEPLOYMENT_JOB_ID"
+          # Upload the zip file to the pre-signed URL with retry
+          MAX_RETRIES=3
+          RETRY_COUNT=0
 
-          # Wait for deployment completion
-          echo "Waiting for Amplify deployment to complete..."
-          MAX_WAIT_TIME=900  # 15 minutes
-          WAIT_TIME=0
-          SLEEP_INTERVAL=30
-
-          while [ $WAIT_TIME -lt $MAX_WAIT_TIME ]; do
-            JOB_STATUS=$(aws amplify get-job \
-              --app-id $AMPLIFY_APP_ID \
-              --branch-name main \
-              --job-id $DEPLOYMENT_JOB_ID \
-              --region us-west-2 \
-              --query 'job.summary.status' \
-              --output text 2>/dev/null || echo "UNKNOWN")
-
-            echo "Deployment status: $JOB_STATUS (waited ${WAIT_TIME}s)"
-
-            case $JOB_STATUS in
-              "SUCCEED")
-                echo "Frontend deployment completed successfully"
-                break
-                ;;
-              "FAILED"|"FAULT")
-                echo "Error: Frontend deployment failed with status: $JOB_STATUS"
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -X PUT "$UPLOAD_URL" \
+              -H "Content-Type: application/zip" \
+              --max-time 300 \
+              --data-binary @amplify-deployment.zip; then
+              break
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                sleep 10
+              else
+                echo "Failed to upload frontend package after $MAX_RETRIES attempts"
                 exit 1
-                ;;
-              "CANCELLED")
-                echo "Error: Frontend deployment was cancelled"
-                exit 1
-                ;;
-              *)
-                sleep $SLEEP_INTERVAL
-                WAIT_TIME=$((WAIT_TIME + SLEEP_INTERVAL))
-                ;;
-            esac
+              fi
+            fi
           done
 
-          if [ $WAIT_TIME -ge $MAX_WAIT_TIME ]; then
-            echo "Error: Frontend deployment timed out after ${MAX_WAIT_TIME}s"
+          # Start the deployment
+          aws amplify start-deployment \
+            --app-id "$AMPLIFY_APP_ID" \
+            --branch-name "main" \
+            --job-id "$JOB_ID" \
+            --region us-west-2 || (echo "Failed to start Amplify deployment" && exit 1)
+
+          # Wait for deployment completion
+          MAX_WAIT=900  # 15 minutes
+          WAIT_TIME=0
+          while [ $WAIT_TIME -lt $MAX_WAIT ]; do
+            JOB_STATUS=$(aws amplify get-job --app-id "$AMPLIFY_APP_ID" --branch-name "main" --job-id "$JOB_ID" --query 'job.summary.status' --output text --region us-west-2)
+            if [ "$JOB_STATUS" = "SUCCEED" ]; then
+              echo "Frontend deployment completed successfully"
+              break
+            elif [ "$JOB_STATUS" = "FAILED" ] || [ "$JOB_STATUS" = "CANCELLED" ]; then
+              echo "Amplify deployment failed with status: $JOB_STATUS"
+              exit 1
+            fi
+            sleep 30
+            WAIT_TIME=$((WAIT_TIME + 30))
+          done
+
+          if [ $WAIT_TIME -ge $MAX_WAIT ]; then
+            echo "Amplify deployment timed out after 15 minutes"
             exit 1
           fi
 

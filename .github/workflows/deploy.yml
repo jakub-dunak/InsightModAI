@@ -190,14 +190,6 @@ jobs:
           aws s3 ls s3://${{ env.DEPLOYMENT_BUCKET }} --region us-west-2 >/dev/null 2>&1 || \
           aws s3 mb s3://${{ env.DEPLOYMENT_BUCKET }} --region us-west-2
 
-      - name: Package CloudFormation template
-        run: |
-          aws cloudformation package \
-            --template-file cloudformation/template.yaml \
-            --s3-bucket ${{ env.DEPLOYMENT_BUCKET }} \
-            --output-template-file packaged-template.yaml \
-            --region us-west-2
-
       - name: Package Lambda functions
         run: |
           # Package each Lambda function from lambda directory
@@ -212,6 +204,12 @@ jobs:
           # Package crm-integrator function
           zip -r ../crm-integrator-${{ env.ENVIRONMENT }}.zip crm_integrator.py
 
+          # Package config-manager function
+          zip -r ../config-manager-${{ env.ENVIRONMENT }}.zip config_manager.py
+
+          # Package insights-handler function
+          zip -r ../insights-handler-${{ env.ENVIRONMENT }}.zip insights_handler.py
+
           # Package agent-deployment function
           zip -r ../agent-deployment-${{ env.ENVIRONMENT }}.zip agent_deployment.py
 
@@ -221,7 +219,17 @@ jobs:
           aws s3 cp feedback-ingestion-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/feedback-ingestion-${{ env.ENVIRONMENT }}.zip --region us-west-2
           aws s3 cp agent-invoker-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/agent-invoker-${{ env.ENVIRONMENT }}.zip --region us-west-2
           aws s3 cp crm-integrator-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/crm-integrator-${{ env.ENVIRONMENT }}.zip --region us-west-2
+          aws s3 cp config-manager-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/config-manager-${{ env.ENVIRONMENT }}.zip --region us-west-2
+          aws s3 cp insights-handler-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/insights-handler-${{ env.ENVIRONMENT }}.zip --region us-west-2
           aws s3 cp agent-deployment-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/agent-deployment-${{ env.ENVIRONMENT }}.zip --region us-west-2
+
+      - name: Package CloudFormation template
+        run: |
+          aws cloudformation package \
+            --template-file cloudformation/template.yaml \
+            --s3-bucket ${{ env.DEPLOYMENT_BUCKET }} \
+            --output-template-file packaged-template.yaml \
+            --region us-west-2
 
       - name: Deploy CloudFormation stack
         run: |

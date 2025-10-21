@@ -338,6 +338,7 @@ jobs:
           # Start Amplify deployment (bucket-based deployment)
           DEPLOYMENT_JOB_ID=$(aws amplify start-deployment \
             --app-id $AMPLIFY_APP_ID \
+            --branch-name main \
             --source-url "s3://${{ env.DEPLOYMENT_BUCKET }}/frontend-build.zip" \
             --source-url-type ZIP \
             --region us-west-2 \

@@ -289,26 +289,32 @@ jobs:
               COGNITO_DOMAIN="${BASE_DOMAIN}-${TIMESTAMP: -6}-${RANDOM_SUFFIX}"
               
               echo "🔍 Checking domain '$COGNITO_DOMAIN' (attempt $((ATTEMPTS + 1))/$MAX_ATTEMPTS)..."
-              
-              # Check if domain exists - capture output for debugging
+
+              # Check if domain exists
               DOMAIN_CHECK=$(aws cognito-idp describe-user-pool-domain \
                   --domain "$COGNITO_DOMAIN" \
                   --region us-west-2 2>&1)
-              
-              echo "📋 AWS Response: $DOMAIN_CHECK"
               
               # Check the result
               if echo "$DOMAIN_CHECK" | grep -q "ResourceNotFoundException\|InvalidParameterException"; then
                 echo "✅ Domain '$COGNITO_DOMAIN' is available!"
                 FOUND=true
                 break
-              elif echo "$DOMAIN_CHECK" | grep -q "DomainDescription"; then
-                echo "❌ Domain already exists, trying another..."
-              else
-                echo "⚠️ Unexpected response, assuming available and proceeding"
-                echo "Full response: $DOMAIN_CHECK"
+              elif echo "$DOMAIN_CHECK" | grep -q '"DomainDescription":\s*{}'; then
+                echo "✅ Domain '$COGNITO_DOMAIN' is available (empty DomainDescription)!"
                 FOUND=true
                 break
+              elif echo "$DOMAIN_CHECK" | grep -q '"DomainDescription":\s*{[^}]*"Domain"'; then
+                echo "❌ Domain already exists, trying another..."
+              else
+                echo "⚠️ Unexpected response, checking exit code..."
+                if [ $AWS_EXIT_CODE -eq 0 ]; then
+                  echo "✅ Assuming domain is available (exit code 0 but unexpected response)"
+                  FOUND=true
+                  break
+                else
+                  echo "❌ Assuming domain exists (non-zero exit code)"
+                fi
               fi
               
               ATTEMPTS=$((ATTEMPTS + 1))

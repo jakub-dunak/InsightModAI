@@ -69,22 +69,8 @@ jobs:
   frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
-    needs: [validate, package-and-deploy]
-    environment:
-      name: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
-
+    needs: validate
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set deployment variables
-        run: |
-          ENVIRONMENT="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
-          AWS_REGION="us-west-2"
-
-          echo "ENVIRONMENT=${ENVIRONMENT}" >> $GITHUB_ENV
-          echo "AWS_REGION=${AWS_REGION}" >> $GITHUB_ENV
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -106,11 +92,6 @@ jobs:
         run: |
           cd frontend
           npm ci
-
-      - name: Configure frontend with Cognito values
-        working-directory: frontend
-        run: |
-          node ../scripts/configure-frontend.js "${{ needs.package-and-deploy.outputs.user-pool-id }}" "${{ needs.package-and-deploy.outputs.user-pool-client-id }}" "${{ env.AWS_REGION }}" "${{ env.ENVIRONMENT }}"
 
       - name: Run linting
         run: |
@@ -196,13 +177,10 @@ jobs:
   package-and-deploy:
     name: Package and Deploy Infrastructure
     runs-on: ubuntu-latest
-    needs: [validate, agent]
+    needs: [validate, frontend, agent]
     if: needs.validate.outputs.template-valid == 'true'
     environment:
       name: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
-    outputs:
-      user-pool-id: ${{ steps.get-cognito-outputs.outputs.user-pool-id }}
-      user-pool-client-id: ${{ steps.get-cognito-outputs.outputs.user-pool-client-id }}
 
     steps:
       - name: Checkout code
@@ -326,6 +304,11 @@ jobs:
         with:
           name: frontend-build
           path: frontend-build/
+
+      - name: Configure frontend with Cognito values
+        working-directory: frontend-build
+        run: |
+          node ../scripts/configure-frontend.js "${{ steps.get-cognito-outputs.outputs.user-pool-id }}" "${{ steps.get-cognito-outputs.outputs.user-pool-client-id }}" "us-west-2" "${{ env.ENVIRONMENT }}"
 
       - name: Download agent container
         uses: actions/download-artifact@v4

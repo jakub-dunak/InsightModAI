@@ -327,6 +327,9 @@ jobs:
             exit 1
           fi
 
+          # Extract just the app ID from the ARN (remove everything before the last '/')
+          AMPLIFY_APP_ID=$(echo "$AMPLIFY_APP_ID" | sed 's/.*\///')
+
           echo "Deploying frontend to Amplify app: $AMPLIFY_APP_ID"
 
           # Upload frontend build to S3

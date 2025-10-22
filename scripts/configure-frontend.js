@@ -45,7 +45,16 @@ const config = {
   ],
   "aws_appsync_graphqlEndpoint": "",
   "aws_appsync_region": region,
-  "aws_appsync_authenticationType": "AMAZON_COGNITO_USER_POOLS"
+  "aws_appsync_authenticationType": "AMAZON_COGNITO_USER_POOLS",
+  "API": {
+    endpoints: [
+      {
+        name: 'InsightModAIApi',
+        endpoint: process.env.REACT_APP_API_ENDPOINT || `https://placeholder.execute-api.${region}.amazonaws.com/${environment}`,
+        region: region,
+      },
+    ],
+  },
 };
 
 const configContent = `const awsmobile = ${JSON.stringify(config, null, 2)};

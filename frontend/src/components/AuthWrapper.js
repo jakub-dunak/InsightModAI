@@ -281,10 +281,26 @@ const DevelopmentModeBanner = () => {
 const AuthWrapper = ({ children }) => {
   // Skip authentication entirely in local development if Cognito is not configured
   if (!hasValidCognitoConfig) {
+    // Provide a development auth context with mock user data
+    const devAuthContext = {
+      user: {
+        username: 'dev-user',
+        attributes: {
+          email: 'dev@example.com',
+          name: 'Development User'
+        }
+      },
+      signOut: () => {
+        console.log('Sign out clicked (development mode - no action taken)');
+      }
+    };
+
     return (
       <>
         <DevelopmentModeBanner />
-        {children}
+        <AuthContext.Provider value={devAuthContext}>
+          {children}
+        </AuthContext.Provider>
       </>
     );
   }

@@ -118,16 +118,14 @@ def process_single_feedback(feedback_id, feedback_data):
         # Generate session ID (33+ characters required)
         session_id = str(uuid.uuid4()) + str(uuid.uuid4()) + str(uuid.uuid4())
         
-        # Prepare payload for agent
+        # Prepare payload for agent (matches agent entrypoint expectations)
         agent_payload = {
-            'input': {
-                'prompt': f'Analyze this customer feedback: {feedback_data.get("feedback_text", "")}',
-                'feedback_id': feedback_id,
-                'customer_id': feedback_data.get('customer_id'),
-                'channel': feedback_data.get('channel'),
-                'context': {
-                    'previous_sentiments': get_recent_sentiments(feedback_data.get('customer_id'))
-                }
+            'prompt': f'Analyze this customer feedback: {feedback_data.get("feedback_text", "")}',
+            'feedback_id': feedback_id,
+            'customer_id': feedback_data.get('customer_id'),
+            'channel': feedback_data.get('channel'),
+            'context': {
+                'previous_sentiments': get_recent_sentiments(feedback_data.get('customer_id'))
             }
         }
         
@@ -140,26 +138,25 @@ def process_single_feedback(feedback_id, feedback_data):
             qualifier='DEFAULT'
         )
         
-        # Process streaming response
-        if 'text/event-stream' in response.get('contentType', ''):
-            content = []
-            for line in response['response'].iter_lines(chunk_size=1):
-                if line:
-                    line = line.decode('utf-8')
-                    if line.startswith('data: '):
-                        data = line[6:].strip('"')
-                        if data and data != '[DONE]':
-                            content.append(data)
-            full_response = ' '.join(content)
-        else:
+        # Process response from AgentCore Runtime
+        # AgentCore returns the response directly as JSON
+        try:
             full_response = json.loads(response['response'].read())
+        except (json.JSONDecodeError, KeyError):
+            # Fallback: try to read as text
+            full_response = response['response'].read().decode('utf-8')
+            try:
+                full_response = json.loads(full_response)
+            except json.JSONDecodeError:
+                # If it's not JSON, treat it as plain text response
+                full_response = {'response': full_response}
         
         # Store analysis results
         store_sentiment_analysis(feedback_id, full_response)
         
         return {
             'feedback_id': feedback_id,
-            'agent_response': full_response,
+            'agent_response': full_response.get('response', str(full_response)),
             'session_id': session_id,
             'status': 'processed_with_agent'
         }
@@ -208,34 +205,47 @@ def store_rating_based_sentiment(feedback_id, feedback_data):
 def store_sentiment_analysis(feedback_id, agent_response):
     """Store sentiment analysis results in DynamoDB."""
     try:
-        # Parse agent response (assuming JSON format)
-        if isinstance(agent_response, str):
-            try:
-                parsed_response = json.loads(agent_response)
-                sentiment_score = parsed_response.get('sentiment_score', 0.5)
-                sentiment_label = parsed_response.get('sentiment_label', 'neutral')
-                analysis_text = parsed_response.get('analysis_text', agent_response)
-            except json.JSONDecodeError:
-                sentiment_score = 0.5  # Neutral default
-                sentiment_label = 'neutral'
-                analysis_text = agent_response
+        # Handle the agent response structure
+        if isinstance(agent_response, dict):
+            # Agent returned structured response
+            response_text = agent_response.get('response', '')
+            model_used = agent_response.get('model_used', os.environ.get('BEDROCK_MODEL_ID', 'amazon.titan-text-premier-v1:0'))
+
+            # Try to extract sentiment information from the response text
+            sentiment_score = 0.5  # Default neutral
+            sentiment_label = 'neutral'
+
+            # Simple heuristic to detect sentiment from response text
+            response_lower = response_text.lower()
+            if any(word in response_lower for word in ['positive', 'good', 'great', 'excellent', 'satisfied']):
+                sentiment_score = 0.8
+                sentiment_label = 'positive'
+            elif any(word in response_lower for word in ['negative', 'bad', 'poor', 'terrible', 'dissatisfied', 'angry']):
+                sentiment_score = 0.2
+                sentiment_label = 'negative'
+
+            analysis_text = response_text
         else:
-            sentiment_score = agent_response.get('sentiment_score', 0.5)
-            sentiment_label = agent_response.get('sentiment_label', 'neutral')
-            analysis_text = agent_response.get('analysis_text', str(agent_response))
+            # Fallback for unexpected response format
+            sentiment_score = 0.5
+            sentiment_label = 'neutral'
+            analysis_text = str(agent_response)
+            model_used = os.environ.get('BEDROCK_MODEL_ID', 'amazon.titan-text-premier-v1:0')
 
-        sentiment_score = 0.5  # Neutral default
-        analysis_text = str(agent_response)
-
+        from datetime import datetime
         dynamodb = boto3.resource('dynamodb')
         table = dynamodb.Table(f'{os.environ["STACK_NAME"]}-sentiment-analysis-{os.environ["ENVIRONMENT"]}')
 
         table.put_item(Item={
             'feedback_id': feedback_id,
             'sentiment_score': sentiment_score,
-            'analysis_timestamp': boto3.client('dynamodb').meta.service_model.operation_model('PutItem').metadata['timestamp'],
+            'sentiment_label': sentiment_label,
+            'analysis_timestamp': datetime.utcnow().isoformat(),
             'agent_response': analysis_text,
-            'model_used': os.environ.get('BEDROCK_MODEL_ID', 'amazon.titan-text-premier-v1:0')
+            'model_used': model_used
         })
+
+        print(f"✅ Stored agent sentiment analysis for {feedback_id}: {sentiment_label} ({sentiment_score})")
+
     except Exception as e:
         print(f"Error storing sentiment analysis: {e}")

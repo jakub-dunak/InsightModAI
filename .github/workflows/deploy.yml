@@ -567,9 +567,10 @@ jobs:
             
             echo "💾 Runtime ARN stored in SSM Parameter Store"
             
-            # Get memory ID from runtime
+            # Get memory ID from runtime (extract runtime ID from ARN)
+            RUNTIME_ID=$(echo "$RUNTIME_ARN" | awk -F'/' '{print $2}')
             MEMORY_ID=$(aws bedrock-agentcore-control get-agent-runtime \
-              --agent-runtime-arn "$RUNTIME_ARN" \
+              --agent-runtime-id "$RUNTIME_ID" \
               --region us-west-2 \
               --query 'memoryConfiguration.memoryId' \
               --output text 2>&1 || echo "")

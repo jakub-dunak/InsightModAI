@@ -530,10 +530,19 @@ jobs:
           echo "⏳ Creating AgentCore Runtime (this may take a few minutes)..."
           
           # Create AgentCore Runtime with environment variables
+          echo "🔧 Command parameters:"
+          echo "  Runtime Name: $RUNTIME_NAME"
+          echo "  Image URI: $IMAGE_URI"
+          echo "  Role ARN: $ROLE_ARN"
+          echo "  Environment: ${{ env.ENVIRONMENT }}"
+
+          ENV_VARS="{\"FEEDBACK_TABLE_NAME\":\"$FEEDBACK_TABLE\",\"SENTIMENT_TABLE_NAME\":\"$SENTIMENT_TABLE\",\"CONFIG_TABLE_NAME\":\"$CONFIG_TABLE\",\"INSIGHTS_BUCKET_NAME\":\"$INSIGHTS_BUCKET\",\"BEDROCK_MODEL_ID\":\"us.anthropic.claude-3-5-sonnet-20241022-v2:0\",\"ENVIRONMENT\":\"${{ env.ENVIRONMENT }}\",\"AWS_REGION\":\"us-west-2\"}"
+          echo "  Environment Variables: $ENV_VARS"
+
           if RUNTIME_ARN=$(aws bedrock-agentcore-control create-agent-runtime \
             --agent-runtime-name "$RUNTIME_NAME" \
             --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"$IMAGE_URI\"}}" \
-            --environment-variables "{\"FEEDBACK_TABLE_NAME\":\"$FEEDBACK_TABLE\",\"SENTIMENT_TABLE_NAME\":\"$SENTIMENT_TABLE\",\"CONFIG_TABLE_NAME\":\"$CONFIG_TABLE\",\"INSIGHTS_BUCKET_NAME\":\"$INSIGHTS_BUCKET\",\"BEDROCK_MODEL_ID\":\"us.anthropic.claude-3-5-sonnet-20241022-v2:0\",\"ENVIRONMENT\":\"${{ env.ENVIRONMENT }}\",\"AWS_REGION\":\"us-west-2\"}" \
+            --environment-variables "$ENV_VARS" \
             --network-configuration '{"networkMode":"PUBLIC"}' \
             --role-arn "$ROLE_ARN" \
             --region us-west-2 \

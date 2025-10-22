@@ -9,6 +9,8 @@ import {
   TextField,
   Button,
   Grid,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import { useAPI } from '../services/api';
 
@@ -17,6 +19,7 @@ const ModuleControl = () => {
   const [config, setConfig] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -46,12 +49,27 @@ const ModuleControl = () => {
     try {
       setSaving(true);
       await api.put('/config', config);
-      // Show success message
+      setSnackbar({
+        open: true,
+        message: 'Configuration saved successfully',
+        severity: 'success',
+      });
+      // Refetch config to ensure UI matches backend state
+      await fetchConfig();
     } catch (error) {
       console.error('Error saving config:', error);
+      setSnackbar({
+        open: true,
+        message: 'Failed to save configuration. Please try again.',
+        severity: 'error',
+      });
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleCloseSnackbar = () => {
+    setSnackbar({ ...snackbar, open: false });
   };
 
   return (
@@ -168,6 +186,17 @@ const ModuleControl = () => {
           </Box>
         </Grid>
       </Grid>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={handleCloseSnackbar}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

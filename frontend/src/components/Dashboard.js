@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Grid,
   Paper,
@@ -22,6 +23,7 @@ import { useAPI } from '../services/api';
 
 const Dashboard = () => {
   const { api } = useAPI();
+  const navigate = useNavigate();
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -150,18 +152,21 @@ const Dashboard = () => {
                 color="primary"
                 variant="outlined"
                 clickable
+                onClick={() => navigate('/monitoring')}
               />
               <Chip
                 label="Generate Report"
                 color="primary"
                 variant="outlined"
                 clickable
+                onClick={() => navigate('/observability')}
               />
               <Chip
                 label="Configure Modules"
                 color="primary"
                 variant="outlined"
                 clickable
+                onClick={() => navigate('/modules')}
               />
             </Box>
           </Paper>

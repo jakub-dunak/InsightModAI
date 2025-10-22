@@ -37,6 +37,14 @@ Parameters:
       - 'true'
       - 'false'
 
+  EnableMockDataGenerator:
+    Type: String
+    Default: 'false'
+    Description: Enable automatic mock data generation for testing (generates sample feedback every 5 minutes)
+    AllowedValues:
+      - 'true'
+      - 'false'
+
   CognitoDomainName:
     Type: String
     Description: Unique domain name for Cognito User Pool (auto-generated)
@@ -49,6 +57,9 @@ Parameters:
     Type: String
     Description: S3 bucket containing Lambda function code
     Default: ""
+
+Conditions:
+  EnableMockDataGen: !Equals [!Ref EnableMockDataGenerator, 'true']
 
 Resources:
   # =============================================================================
@@ -488,6 +499,64 @@ Resources:
                   - ssm:PutParameter
                   - ssm:DeleteParameter
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/insightmodai/agent-runtime-arn-${EnvironmentName}'
+
+  MockDataGeneratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-mock-data-generator-${EnvironmentName}'
+      Runtime: python3.11
+      Handler: mock_data_generator.lambda_handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub 'lambda/mock-data-generator-${EnvironmentName}.zip'
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          STACK_NAME: !Ref AWS::StackName
+          ENVIRONMENT: !Ref EnvironmentName
+      Role: !GetAtt MockDataGeneratorFunctionRole.Arn
+
+  MockDataGeneratorFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LambdaInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt FeedbackIngestionFunction.Arn
+
+  MockDataGeneratorSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${AWS::StackName}-mock-data-schedule-${EnvironmentName}'
+      Description: 'Trigger mock data generation every 5 minutes'
+      ScheduleExpression: 'rate(5 minutes)'
+      State: !If [EnableMockDataGen, ENABLED, DISABLED]
+      Targets:
+        - Arn: !GetAtt MockDataGeneratorFunction.Arn
+          Id: MockDataGeneratorTarget
+
+  MockDataGeneratorSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MockDataGeneratorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt MockDataGeneratorSchedule.Arn
 
   # =============================================================================
   # ECR REPOSITORY FOR AGENT CONTAINER

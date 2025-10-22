@@ -218,6 +218,9 @@ jobs:
           # Package agent-deployment function
           zip -r ../agent-deployment-${{ env.ENVIRONMENT }}.zip agent_deployment.py
 
+          # Package mock-data-generator function
+          zip -r ../mock-data-generator-${{ env.ENVIRONMENT }}.zip mock_data_generator.py
+
           cd ..
 
           # Upload Lambda packages to S3
@@ -227,6 +230,7 @@ jobs:
           aws s3 cp config-manager-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/config-manager-${{ env.ENVIRONMENT }}.zip --region us-west-2
           aws s3 cp insights-handler-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/insights-handler-${{ env.ENVIRONMENT }}.zip --region us-west-2
           aws s3 cp agent-deployment-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/agent-deployment-${{ env.ENVIRONMENT }}.zip --region us-west-2
+          aws s3 cp mock-data-generator-${{ env.ENVIRONMENT }}.zip s3://${{ env.DEPLOYMENT_BUCKET }}/lambda/mock-data-generator-${{ env.ENVIRONMENT }}.zip --region us-west-2
 
       - name: Package CloudFormation template
         run: |
@@ -260,6 +264,7 @@ jobs:
               BedrockModelId="us.anthropic.claude-3-5-sonnet-20241022-v2:0" \
               CognitoDomainName="${COGNITO_PREFIX}-${ENVIRONMENT}" \
               LambdaCodeBucket="${{ env.DEPLOYMENT_BUCKET }}" \
+              EnableMockDataGenerator="true" \
             --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
             --region us-west-2 \
             --no-fail-on-empty-changeset

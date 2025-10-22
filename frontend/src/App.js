@@ -1,13 +1,14 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Amplify } from 'aws-amplify';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { Toaster } from 'react-hot-toast';
+import '@aws-amplify/ui-react/styles.css';
 
 // Components
+import AuthWrapper from './components/AuthWrapper';
 import Layout from './components/Layout';
-import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import ModuleControl from './components/ModuleControl';
 import Observability from './components/Observability';
@@ -15,7 +16,6 @@ import Monitoring from './components/Monitoring';
 import MemoryViewer from './components/MemoryViewer';
 
 // Services
-import { AuthProvider, useAuth } from './services/auth';
 import { APIProvider } from './services/api';
 
 // Configuration
@@ -55,37 +55,21 @@ const theme = createTheme({
   },
 });
 
-// Protected Route Component
-const ProtectedRoute = ({ children }) => {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <Layout>
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-          Loading...
-        </div>
-      </Layout>
-    );
-  }
-
-  return user ? children : <Navigate to="/login" />;
-};
-
 // Main App Component
 function AppContent() {
   return (
     <Router>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-          <Route index element={<Dashboard />} />
-          <Route path="modules" element={<ModuleControl />} />
-          <Route path="observability" element={<Observability />} />
-          <Route path="monitoring" element={<Monitoring />} />
-          <Route path="memory" element={<MemoryViewer />} />
-        </Route>
-      </Routes>
+      <AuthWrapper>
+        <Routes>
+          <Route path="/" element={<Layout />}>
+            <Route index element={<Dashboard />} />
+            <Route path="modules" element={<ModuleControl />} />
+            <Route path="observability" element={<Observability />} />
+            <Route path="monitoring" element={<Monitoring />} />
+            <Route path="memory" element={<MemoryViewer />} />
+          </Route>
+        </Routes>
+      </AuthWrapper>
     </Router>
   );
 }
@@ -95,12 +79,10 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <AuthProvider>
-        <APIProvider>
-          <AppContent />
-          <Toaster position="top-right" />
-        </APIProvider>
-      </AuthProvider>
+      <APIProvider>
+        <AppContent />
+        <Toaster position="top-right" />
+      </APIProvider>
     </ThemeProvider>
   );
 }

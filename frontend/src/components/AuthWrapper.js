@@ -223,85 +223,26 @@ const AuthenticatorContent = ({ children }) => {
   return <AuthLoading />;
 };
 
-// Development mode component (when Cognito is not configured)
-const DevelopmentModeBanner = () => {
-  const [dismissed, setDismissed] = useState(false);
-
-  if (dismissed) return null;
-
-  return (
-    <div style={{
-      backgroundColor: '#fef3c7',
-      borderBottom: '1px solid #f59e0b',
-      padding: '12px 24px'
-    }}>
-      <div style={{
-        maxWidth: '1280px',
-        margin: '0 auto',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <svg style={{ width: '20px', height: '20px', color: '#d97706' }} fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-          </svg>
-          <div>
-            <p style={{ fontSize: '14px', fontWeight: '500', color: '#92400e', margin: '0' }}>
-              Development Mode Active
-            </p>
-            <p style={{ fontSize: '14px', color: '#a16207', margin: '0' }}>
-              Authentication is disabled. Deploy to production for full security features.
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={() => setDismissed(true)}
-          style={{
-            color: '#92400e',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            padding: '4px',
-            borderRadius: '4px'
-          }}
-          onMouseOver={(e) => e.target.style.color = '#78350f'}
-          onMouseOut={(e) => e.target.style.color = '#92400e'}
-        >
-          <svg style={{ width: '16px', height: '16px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-};
 
 // Main wrapper component
 const AuthWrapper = ({ children }) => {
-  // Skip authentication entirely in local development if Cognito is not configured
+  // Always require authentication - show error if Cognito is not configured
   if (!hasValidCognitoConfig) {
-    // Provide a development auth context with mock user data
-    const devAuthContext = {
-      user: {
-        username: 'dev-user',
-        attributes: {
-          email: 'dev@example.com',
-          name: 'Development User'
-        }
-      },
-      signOut: () => {
-        console.log('Sign out clicked (development mode - no action taken)');
-      }
-    };
-
     return (
-      <>
-        <DevelopmentModeBanner />
-        <AuthContext.Provider value={devAuthContext}>
-          {children}
-        </AuthContext.Provider>
-      </>
+      <Container component="main" maxWidth="sm" sx={{ mt: 8 }}>
+        <CssBaseline />
+        <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
+          <Typography variant="h5" color="error" gutterBottom>
+            Authentication Configuration Error
+          </Typography>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Cognito authentication is not properly configured.
+          </Typography>
+          <Typography variant="body2" color="textSecondary">
+            Please check that REACT_APP_USER_POOL_ID and REACT_APP_USER_POOL_CLIENT_ID environment variables are set.
+          </Typography>
+        </Paper>
+      </Container>
     );
   }
 

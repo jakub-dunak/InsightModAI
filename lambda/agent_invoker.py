@@ -6,17 +6,22 @@ from botocore.exceptions import ClientError
 
 def lambda_handler(event, context):
     """Invoke AgentCore Runtime for feedback processing."""
+    print(f"Lambda invoked with event type: {type(event)}")
+    print(f"Event keys: {list(event.keys()) if isinstance(event, dict) else 'Not a dict'}")
+
     try:
         # Check if this is a DynamoDB Stream event
         if 'Records' in event:
+            print(f"Processing DynamoDB stream with {len(event['Records'])} records")
             return process_dynamodb_stream(event, context)
-        
+
         # Handle direct invocation (backward compatibility)
+        print("Processing direct invocation")
         feedback_id = event.get('feedback_id')
         feedback_data = event.get('feedback_data', {})
-        
+
         result = process_single_feedback(feedback_id, feedback_data)
-        
+
         return {
             'statusCode': 200 if 'error' not in result else 400,
             'body': json.dumps(result)
@@ -24,6 +29,8 @@ def lambda_handler(event, context):
 
     except Exception as e:
         print(f"Error invoking agent: {e}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
         return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
 
 def get_recent_sentiments(customer_id):
@@ -100,9 +107,12 @@ def process_dynamodb_stream(event, context):
 
 def process_single_feedback(feedback_id, feedback_data):
     """Process a single feedback item."""
+    print(f"Processing feedback {feedback_id} with data keys: {list(feedback_data.keys()) if feedback_data else 'None'}")
+
     if not feedback_id:
+        print("No feedback_id provided")
         return {'error': 'feedback_id required'}
-    
+
     try:
         # Get agent runtime ARN from SSM
         ssm = boto3.client('ssm')

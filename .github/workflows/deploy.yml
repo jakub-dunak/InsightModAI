@@ -100,7 +100,6 @@ jobs:
             frontend/public/
             frontend/package.json
             frontend/package-lock.json
-            scripts/
           retention-days: 7
 
   # Build and test agent container
@@ -304,7 +303,7 @@ jobs:
       - name: Configure frontend with CloudFormation outputs
         working-directory: frontend-source
         run: |
-          node ./scripts/configure-frontend.js "${{ steps.get-cf-outputs.outputs.user-pool-id }}" "${{ steps.get-cf-outputs.outputs.user-pool-client-id }}" "${{ steps.get-cf-outputs.outputs.api-endpoint }}" "us-west-2" "${{ env.ENVIRONMENT }}"
+          node ../scripts/configure-frontend.js "${{ steps.get-cf-outputs.outputs.user-pool-id }}" "${{ steps.get-cf-outputs.outputs.user-pool-client-id }}" "${{ steps.get-cf-outputs.outputs.api-endpoint }}" "us-west-2" "${{ env.ENVIRONMENT }}"
 
       - name: Install dependencies and build configured frontend
         working-directory: frontend-source

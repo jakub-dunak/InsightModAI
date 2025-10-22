@@ -978,21 +978,8 @@ Resources:
     Type: AWS::Amplify::App
     Properties:
       Name: !Sub '${AWS::StackName}-dashboard-${EnvironmentName}'
+      Description: !Sub 'InsightModAI Frontend - ${EnvironmentName}'
       Platform: WEB
-      BuildSpec: |
-        version: 1
-        frontend:
-          phases:
-            preBuild:
-              commands:
-                - echo "Build handled by GitHub Actions CI/CD"
-            build:
-              commands:
-                - echo "Deployment package provided by CI/CD"
-          artifacts:
-            baseDirectory: dist
-            files:
-              - '**/*'
       EnvironmentVariables:
         - Name: REACT_APP_API_ENDPOINT
           Value: !Sub 'https://${InsightModAIApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}'
@@ -1004,13 +991,32 @@ Resources:
           Value: !Ref IdentityPool
         - Name: REACT_APP_REGION
           Value: !Ref AWS::Region
+      CustomRules:
+        - Source: '</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp)$)([^.]+$)/>'
+          Target: '/index.html'
+          Status: '200'
+      IAMServiceRole: !GetAtt AmplifyRole.Arn
+
+  AmplifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-amplify-role-${EnvironmentName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: amplify.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess-Amplify
 
   AmplifyBranch:
     Type: AWS::Amplify::Branch
     Properties:
       AppId: !GetAtt AmplifyApp.AppId
       BranchName: main
-      EnableAutoBuild: true
+      EnableAutoBuild: false
       Framework: React
       EnvironmentVariables:
         - Name: REACT_APP_API_ENDPOINT

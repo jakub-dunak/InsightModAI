@@ -8,10 +8,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const [,, userPoolId, userPoolClientId, region, environment = 'production'] = process.argv;
+const [,, userPoolId, userPoolClientId, apiEndpoint, region, environment = 'production'] = process.argv;
 
-if (!userPoolId || !userPoolClientId || !region) {
-  console.error('Usage: node scripts/configure-frontend.js <user-pool-id> <user-pool-client-id> <region> [environment]');
+if (!userPoolId || !userPoolClientId || !apiEndpoint || !region) {
+  console.error('Usage: node scripts/configure-frontend.js <user-pool-id> <user-pool-client-id> <api-endpoint> <region> [environment]');
   process.exit(1);
 }
 
@@ -50,7 +50,7 @@ const config = {
     endpoints: [
       {
         name: 'InsightModAIApi',
-        endpoint: process.env.REACT_APP_API_ENDPOINT || `https://placeholder.execute-api.${region}.amazonaws.com/${environment}`,
+        endpoint: apiEndpoint,
         region: region,
       },
     ],
@@ -68,4 +68,5 @@ fs.writeFileSync(configPath, configContent);
 console.log('✅ Frontend configuration updated successfully!');
 console.log(`   User Pool ID: ${userPoolId}`);
 console.log(`   Client ID: ${userPoolClientId}`);
+console.log(`   API Endpoint: ${apiEndpoint}`);
 console.log(`   Region: ${region}`);

@@ -100,6 +100,7 @@ jobs:
             frontend/public/
             frontend/package.json
             frontend/package-lock.json
+            scripts/
           retention-days: 7
 
   # Build and test agent container
@@ -266,8 +267,8 @@ jobs:
 
           echo "Stack deployment completed successfully"
 
-      - name: Get Cognito outputs
-        id: get-cognito-outputs
+      - name: Get CloudFormation outputs
+        id: get-cf-outputs
         run: |
           # Get User Pool ID
           USER_POOL_ID=$(aws cloudformation describe-stacks \
@@ -283,8 +284,16 @@ jobs:
             --query 'Stacks[0].Outputs[?OutputKey==`UserPoolClientId`].OutputValue' \
             --output text)
 
+          # Get API Endpoint
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region us-west-2 \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text)
+
           echo "user-pool-id=$USER_POOL_ID" >> $GITHUB_OUTPUT
           echo "user-pool-client-id=$USER_POOL_CLIENT_ID" >> $GITHUB_OUTPUT
+          echo "api-endpoint=$API_ENDPOINT" >> $GITHUB_OUTPUT
 
       - name: Download frontend source
         uses: actions/download-artifact@v4
@@ -292,10 +301,10 @@ jobs:
           name: frontend-source
           path: frontend-source/
 
-      - name: Configure frontend with Cognito values
+      - name: Configure frontend with CloudFormation outputs
         working-directory: frontend-source
         run: |
-          node ../scripts/configure-frontend.js "${{ steps.get-cognito-outputs.outputs.user-pool-id }}" "${{ steps.get-cognito-outputs.outputs.user-pool-client-id }}" "us-west-2" "${{ env.ENVIRONMENT }}"
+          node ./scripts/configure-frontend.js "${{ steps.get-cf-outputs.outputs.user-pool-id }}" "${{ steps.get-cf-outputs.outputs.user-pool-client-id }}" "${{ steps.get-cf-outputs.outputs.api-endpoint }}" "us-west-2" "${{ env.ENVIRONMENT }}"
 
       - name: Install dependencies and build configured frontend
         working-directory: frontend-source

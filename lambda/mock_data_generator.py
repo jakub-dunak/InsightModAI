@@ -13,15 +13,15 @@ def lambda_handler(event, context):
     try:
         # Generate random feedback data
         feedback = generate_random_feedback()
-        
+
         # Send to feedback ingestion
-        send_feedback(feedback)
-        
+        result = send_feedback(feedback)
+
         return {
             'statusCode': 200,
             'body': json.dumps({
                 'message': 'Mock feedback generated successfully',
-                'feedback_id': feedback.get('customer_id')
+                'feedback_id': result.get('feedback_id')
             })
         }
     except Exception as e:
@@ -143,41 +143,43 @@ def generate_random_feedback():
     return feedback
 
 def send_feedback(feedback):
-    """Send feedback directly to DynamoDB."""
-    dynamodb = boto3.resource('dynamodb')
-    table_name = f'{os.environ["STACK_NAME"]}-feedback-records-{os.environ["ENVIRONMENT"]}'
-    table = dynamodb.Table(table_name)
-    
+    """Send feedback to the feedback ingestion Lambda function."""
+    lambda_client = boto3.client('lambda')
+
     try:
-        # Generate unique feedback ID
-        feedback_id = str(uuid.uuid4())
-        
-        # Prepare item for DynamoDB
-        item = {
-            'feedback_id': feedback_id,
-            'timestamp': datetime.utcnow().isoformat(),
-            'source': 'mock_generator',
-            **feedback
+        # Prepare payload for feedback ingestion function
+        payload = {
+            'body': json.dumps(feedback),
+            'headers': {
+                'Content-Type': 'application/json'
+            }
         }
-        
-        # Convert nested dicts to strings if needed for DynamoDB
-        if 'metadata' in item and isinstance(item['metadata'], dict):
-            # DynamoDB handles nested maps, but let's ensure it's serializable
-            pass
-        
-        # Write to DynamoDB
-        table.put_item(Item=item)
-        
-        print(f"Stored mock feedback {feedback_id} for customer {feedback.get('customer_id')}")
+
+        # Invoke feedback ingestion function
+        function_name = f'{os.environ["STACK_NAME"]}-feedback-ingestion-{os.environ["ENVIRONMENT"]}'
+        response = lambda_client.invoke(
+            FunctionName=function_name,
+            InvocationType='RequestResponse',
+            Payload=json.dumps(payload)
+        )
+
+        # Parse response
+        response_payload = json.loads(response['Payload'].read())
+        if response['StatusCode'] != 200:
+            raise Exception(f"Feedback ingestion failed: {response_payload}")
+
+        result = json.loads(response_payload.get('body', '{}'))
+
+        print(f"Sent mock feedback to ingestion function for customer {feedback.get('customer_id')}")
         print(f"Feedback text: {feedback.get('feedback_text')[:100]}...")
         print(f"Rating: {feedback.get('rating')}, Channel: {feedback.get('channel')}")
-        print(f"DynamoDB Stream will automatically trigger processing")
-        
-        return {'feedback_id': feedback_id, 'status': 'stored'}
-        
+        print(f"Response: {result}")
+
+        return result
+
     except Exception as e:
-        print(f"Error storing feedback to DynamoDB: {e}")
-        print(f"Table name: {table_name}")
+        print(f"Error sending feedback to ingestion function: {e}")
+        print(f"Function name: {function_name}")
         raise
 
 

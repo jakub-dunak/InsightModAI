@@ -549,6 +549,14 @@ Resources:
                 Action:
                   - dynamodb:PutItem
                 Resource: !GetAtt FeedbackRecordsTable.Arn
+        - PolicyName: InvokeFeedbackIngestion
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt FeedbackIngestionFunction.Arn
 
   MockDataGeneratorSchedule:
     Type: AWS::Events::Rule

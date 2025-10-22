@@ -527,14 +527,13 @@ jobs:
           echo "  • Config Table: $CONFIG_TABLE"
           echo "  • Insights Bucket: $INSIGHTS_BUCKET"
           echo ""
-          echo "⏳ Creating AgentCore Runtime with Memory (this may take a few minutes)..."
+          echo "⏳ Creating AgentCore Runtime (this may take a few minutes)..."
           
-          # Create AgentCore Runtime with environment variables and memory configuration
+          # Create AgentCore Runtime with environment variables
           if RUNTIME_ARN=$(aws bedrock-agentcore-control create-agent-runtime \
             --agent-runtime-name "$RUNTIME_NAME" \
             --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"$IMAGE_URI\",\"environmentVariables\":{\"FEEDBACK_TABLE_NAME\":\"$FEEDBACK_TABLE\",\"SENTIMENT_TABLE_NAME\":\"$SENTIMENT_TABLE\",\"CONFIG_TABLE_NAME\":\"$CONFIG_TABLE\",\"INSIGHTS_BUCKET_NAME\":\"$INSIGHTS_BUCKET\",\"BEDROCK_MODEL_ID\":\"us.anthropic.claude-3-5-sonnet-20241022-v2:0\",\"ENVIRONMENT\":\"${{ env.ENVIRONMENT }}\",\"AWS_REGION\":\"us-west-2\"}}}" \
             --network-configuration '{"networkMode":"PUBLIC"}' \
-            --memory-configuration "{\"memoryStrategies\":[{\"summaryMemoryStrategy\":{\"name\":\"SessionSummarizer\",\"namespaces\":[\"/summaries/{actorId}/{sessionId}\"]}},{\"semanticMemoryStrategy\":{\"name\":\"SemanticFacts\",\"namespaces\":[\"/facts/{actorId}\"]}}]}" \
             --role-arn "$ROLE_ARN" \
             --region us-west-2 \
             --query 'agentRuntimeArn' \
@@ -573,7 +572,7 @@ jobs:
             fi
             
             echo ""
-            echo "🎉 AgentCore Runtime deployment complete with Memory enabled!"
+            echo "🎉 AgentCore Runtime deployment complete!"
             
           else
             echo ""

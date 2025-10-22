@@ -171,9 +171,7 @@ def send_feedback(feedback):
         print(f"Stored mock feedback {feedback_id} for customer {feedback.get('customer_id')}")
         print(f"Feedback text: {feedback.get('feedback_text')[:100]}...")
         print(f"Rating: {feedback.get('rating')}, Channel: {feedback.get('channel')}")
-        
-        # Optionally trigger agent processing if auto-process is enabled
-        trigger_agent_processing_if_enabled(feedback_id, feedback)
+        print(f"DynamoDB Stream will automatically trigger processing")
         
         return {'feedback_id': feedback_id, 'status': 'stored'}
         
@@ -182,30 +180,4 @@ def send_feedback(feedback):
         print(f"Table name: {table_name}")
         raise
 
-def trigger_agent_processing_if_enabled(feedback_id, feedback_data):
-    """Trigger agent processing if auto-process is enabled."""
-    try:
-        dynamodb = boto3.resource('dynamodb')
-        config_table_name = f'{os.environ["STACK_NAME"]}-agent-config-{os.environ["ENVIRONMENT"]}'
-        config_table = dynamodb.Table(config_table_name)
-        
-        # Check if auto-processing is enabled
-        response = config_table.get_item(Key={'config_key': 'auto_process_feedback'})
-        
-        if response.get('Item', {}).get('config_value') == 'true':
-            lambda_client = boto3.client('lambda')
-            agent_function = f'{os.environ["STACK_NAME"]}-agent-invoker-{os.environ["ENVIRONMENT"]}'
-            
-            lambda_client.invoke(
-                FunctionName=agent_function,
-                InvocationType='Event',
-                Payload=json.dumps({
-                    'feedback_id': feedback_id,
-                    'feedback_data': feedback_data
-                })
-            )
-            print(f"Triggered agent processing for feedback {feedback_id}")
-    except Exception as e:
-        # Don't fail if agent processing trigger fails
-        print(f"Could not trigger agent processing: {e}")
 

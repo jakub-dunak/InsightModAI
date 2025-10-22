@@ -549,18 +549,6 @@ Resources:
                 Action:
                   - dynamodb:PutItem
                 Resource: !GetAtt FeedbackRecordsTable.Arn
-              - Effect: Allow
-                Action:
-                  - dynamodb:GetItem
-                Resource: !GetAtt AgentConfigTable.Arn
-        - PolicyName: LambdaInvokeAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - lambda:InvokeFunction
-                Resource: !GetAtt AgentInvokerFunction.Arn
 
   MockDataGeneratorSchedule:
     Type: AWS::Events::Rule

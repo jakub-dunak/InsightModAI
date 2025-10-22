@@ -466,6 +466,57 @@ jobs:
 
           echo "Agent container deployed successfully to: $ECR_URI:latest"
 
+      - name: Deploy AgentCore Runtime
+        run: |
+          echo "Creating AgentCore Runtime from container..."
+
+          # Invoke the agent deployment Lambda to create AgentCore Runtime
+          AGENT_DEPLOYMENT_FUNCTION="${{ env.STACK_NAME }}-agent-deployment-${{ env.ENVIRONMENT }}"
+          
+          # Create payload for the Lambda (simulating CloudFormation custom resource)
+          PAYLOAD=$(cat <<EOF
+          {
+            "RequestType": "Create",
+            "ResourceProperties": {
+              "StackName": "${{ env.STACK_NAME }}",
+              "Environment": "${{ env.ENVIRONMENT }}"
+            }
+          }
+          EOF
+          )
+
+          echo "Invoking Lambda: $AGENT_DEPLOYMENT_FUNCTION"
+          
+          # Invoke Lambda and wait for completion
+          RESPONSE=$(aws lambda invoke \
+            --function-name "$AGENT_DEPLOYMENT_FUNCTION" \
+            --payload "$PAYLOAD" \
+            --region us-west-2 \
+            --cli-read-timeout 900 \
+            response.json 2>&1)
+          
+          # Check if invocation was successful
+          if [ $? -eq 0 ]; then
+            echo "Lambda invoked successfully"
+            echo "Response:"
+            cat response.json | jq '.'
+            
+            # Check if the Lambda execution was successful
+            STATUS=$(cat response.json | jq -r '.Status // "Unknown"')
+            if [ "$STATUS" = "Success" ]; then
+              echo "AgentCore Runtime created successfully"
+              RUNTIME_ARN=$(cat response.json | jq -r '.Data.AgentRuntimeArn // "Not found"')
+              echo "Runtime ARN: $RUNTIME_ARN"
+            else
+              echo "Warning: AgentCore Runtime creation may have failed"
+              echo "Status: $STATUS"
+              cat response.json
+            fi
+          else
+            echo "Warning: Failed to invoke agent deployment Lambda"
+            echo "$RESPONSE"
+          fi
+
 
   # Cleanup on failure
   cleanup:

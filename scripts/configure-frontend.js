@@ -62,10 +62,18 @@ const configContent = `const awsmobile = ${JSON.stringify(config, null, 2)};
 export default awsmobile;
 `;
 
-const configPath = path.join(__dirname, '..', 'frontend', 'src', 'aws-exports.js');
+// Support both repository structure and downloaded artifact structure
+// If run from root with frontend-source/ (CI), write there
+// If run from root with frontend/ (local), write there
+const targetDir = fs.existsSync(path.join(process.cwd(), 'src')) 
+  ? process.cwd()  // Running from within frontend directory
+  : path.join(__dirname, '..', 'frontend');  // Running from repo root
+
+const configPath = path.join(targetDir, 'src', 'aws-exports.js');
 fs.writeFileSync(configPath, configContent);
 
 console.log('✅ Frontend configuration updated successfully!');
+console.log(`   Config written to: ${configPath}`);
 console.log(`   User Pool ID: ${userPoolId}`);
 console.log(`   Client ID: ${userPoolClientId}`);
 console.log(`   API Endpoint: ${apiEndpoint}`);

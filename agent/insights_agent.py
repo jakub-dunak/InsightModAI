@@ -15,11 +15,23 @@ from typing import Dict, List, Any, Optional
 # Strands imports
 from strands import Agent, tool
 from strands.models import BedrockModel
-from bedrock_agentcore.runtime import BedrockAgentCoreApp
-from bedrock_agentcore.memory import MemoryClient
+
+# Try to import Bedrock AgentCore components (may not be available)
+try:
+    from bedrock_agentcore.runtime import BedrockAgentCoreApp
+    from bedrock_agentcore.memory import MemoryClient
+    AGENTCORE_AVAILABLE = True
+except ImportError:
+    print("⚠️ Bedrock AgentCore SDK not available, running in basic mode")
+    AGENTCORE_AVAILABLE = False
+    BedrockAgentCoreApp = None
+    MemoryClient = None
 
 # Initialize the Bedrock AgentCore App
-app = BedrockAgentCoreApp()
+if AGENTCORE_AVAILABLE:
+    app = BedrockAgentCoreApp()
+else:
+    app = None
 
 # Initialize Bedrock model (will be used by the Strands agent)
 model_id = os.getenv('BEDROCK_MODEL_ID', 'amazon.titan-text-premier-v1:0')
@@ -32,7 +44,10 @@ lambda_client = boto3.client('lambda')
 ssm = boto3.client('ssm')
 
 # Initialize Memory Client
-memory_client = MemoryClient(region_name=os.getenv('AWS_REGION', 'us-west-2'))
+if AGENTCORE_AVAILABLE:
+    memory_client = MemoryClient(region_name=os.getenv('AWS_REGION', 'us-west-2'))
+else:
+    memory_client = None
 
 # Table names from environment variables (set by CloudFormation)
 FEEDBACK_TABLE = os.getenv('FEEDBACK_TABLE_NAME')
@@ -42,13 +57,17 @@ INSIGHTS_BUCKET = os.getenv('INSIGHTS_BUCKET_NAME')
 ENVIRONMENT = os.getenv('ENVIRONMENT', 'dev')
 
 # Get Memory ID from SSM Parameter Store
-try:
-    memory_param = ssm.get_parameter(Name=f'/insightmodai/agent-memory-id-{ENVIRONMENT}')
-    MEMORY_ID = memory_param['Parameter']['Value']
-    print(f"🧠 Using AgentCore Memory: {MEMORY_ID}")
-except ssm.exceptions.ParameterNotFound:
-    MEMORY_ID = None
-    print("⚠️  Memory ID not found - memory features disabled")
+MEMORY_ID = None
+if AGENTCORE_AVAILABLE:
+    try:
+        memory_param = ssm.get_parameter(Name=f'/insightmodai/agent-memory-id-{ENVIRONMENT}')
+        MEMORY_ID = memory_param['Parameter']['Value']
+        print(f"🧠 Using AgentCore Memory: {MEMORY_ID}")
+    except ssm.exceptions.ParameterNotFound:
+        MEMORY_ID = None
+        print("⚠️  Memory ID not found - memory features disabled")
+else:
+    print("⚠️  AgentCore not available - memory features disabled")
 
 # Validate required environment variables
 if not FEEDBACK_TABLE or not SENTIMENT_TABLE or not CONFIG_TABLE:
@@ -469,6 +488,44 @@ agent = Agent(
 )
 
 
+async def insights_agent_fallback(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Fallback agent implementation when AgentCore SDK is not available.
+    Provides basic sentiment analysis using Bedrock directly.
+    """
+    try:
+        user_input = payload.get('prompt', '')
+        feedback_id = payload.get('feedback_id')
+
+        # Use the analyze_sentiment tool directly
+        if 'feedback' in user_input.lower() or 'analyze' in user_input.lower():
+            # Extract feedback text from the prompt (simple extraction)
+            feedback_text = user_input.replace('Analyze this customer feedback:', '').strip()
+            sentiment_result = analyze_sentiment(feedback_text)
+
+            response_text = f"Sentiment Analysis: {sentiment_result.get('sentiment_label', 'neutral')} (confidence: {sentiment_result.get('confidence', 0.5)})\n\nKey themes: {', '.join(sentiment_result.get('key_themes', []))}"
+        else:
+            response_text = f"I received your request: {user_input[:100]}... Please provide customer feedback to analyze."
+
+        return {
+            "response": response_text,
+            "feedback_id": feedback_id,
+            "session_id": payload.get('session_id', str(uuid.uuid4())),
+            "customer_id": payload.get('customer_id', 'anonymous'),
+            "timestamp": datetime.utcnow().isoformat(),
+            "model_used": model_id,
+            "memory_enabled": False,
+            "tools_used": ["analyze_sentiment"]
+        }
+
+    except Exception as e:
+        print(f"Error in fallback agent: {e}")
+        return {
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+
 @app.entrypoint
 async def insights_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -481,6 +538,10 @@ async def insights_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Agent response with analysis and recommendations
     """
+    # If AgentCore is not available, use fallback implementation
+    if not AGENTCORE_AVAILABLE:
+        return await insights_agent_fallback(payload)
+
     try:
         # Extract input data
         user_input = payload.get('prompt', '')
@@ -586,11 +647,16 @@ async def insights_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
 
 
-# Health check endpoint (automatically handled by BedrockAgentCoreApp)
+# Health check endpoint
 @app.entrypoint
 def ping() -> Dict[str, str]:
     """Health check endpoint."""
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "agentcore_available": AGENTCORE_AVAILABLE,
+        "memory_enabled": MEMORY_ID is not None if AGENTCORE_AVAILABLE else False
+    }
 
 
 if __name__ == "__main__":

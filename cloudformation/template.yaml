@@ -221,6 +221,10 @@ Resources:
                 Resource:
                   - !GetAtt FeedbackRecordsTable.Arn
                   - !Sub '${FeedbackRecordsTable.Arn}/index/*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt AgentConfigTable.Arn
         - PolicyName: S3Access
           PolicyDocument:
             Version: '2012-10-17'

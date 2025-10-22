@@ -294,6 +294,13 @@ Resources:
                 Resource:
                   - !GetAtt SentimentAnalysisTable.Arn
                   - !Sub '${SentimentAnalysisTable.Arn}/index/*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                  - dynamodb:ListStreams
+                Resource: !GetAtt FeedbackRecordsTable.StreamArn
         - PolicyName: SSMAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -530,6 +537,18 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource: !GetAtt FeedbackRecordsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt AgentConfigTable.Arn
         - PolicyName: LambdaInvokeAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -537,7 +556,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - lambda:InvokeFunction
-                Resource: !GetAtt FeedbackIngestionFunction.Arn
+                Resource: !GetAtt AgentInvokerFunction.Arn
 
   MockDataGeneratorSchedule:
     Type: AWS::Events::Rule
@@ -557,6 +576,20 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt MockDataGeneratorSchedule.Arn
+
+  # DynamoDB Stream to Lambda Event Source Mapping
+  FeedbackStreamEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt FeedbackRecordsTable.StreamArn
+      FunctionName: !Ref AgentInvokerFunction
+      StartingPosition: LATEST
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 5
+      MaximumRecordAgeInSeconds: 604800  # 7 days
+      MaximumRetryAttempts: 3
+      BisectBatchOnFunctionError: true
+      Enabled: true
 
   # =============================================================================
   # ECR REPOSITORY FOR AGENT CONTAINER

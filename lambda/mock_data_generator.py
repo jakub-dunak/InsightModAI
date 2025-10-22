@@ -2,6 +2,7 @@ import json
 import boto3
 import random
 import os
+import uuid
 from datetime import datetime, timedelta
 
 def lambda_handler(event, context):
@@ -142,23 +143,69 @@ def generate_random_feedback():
     return feedback
 
 def send_feedback(feedback):
-    """Send feedback to the ingestion Lambda."""
-    lambda_client = boto3.client('lambda')
-    
-    # Invoke feedback ingestion function
-    function_name = f'{os.environ["STACK_NAME"]}-feedback-ingestion-{os.environ["ENVIRONMENT"]}'
+    """Send feedback directly to DynamoDB."""
+    dynamodb = boto3.resource('dynamodb')
+    table_name = f'{os.environ["STACK_NAME"]}-feedback-records-{os.environ["ENVIRONMENT"]}'
+    table = dynamodb.Table(table_name)
     
     try:
-        response = lambda_client.invoke(
-            FunctionName=function_name,
-            InvocationType='Event',  # Async invocation
-            Payload=json.dumps({
-                'body': json.dumps(feedback)
-            })
-        )
-        print(f"Sent feedback to {function_name}: {feedback.get('customer_id')}")
-        return response
+        # Generate unique feedback ID
+        feedback_id = str(uuid.uuid4())
+        
+        # Prepare item for DynamoDB
+        item = {
+            'feedback_id': feedback_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'source': 'mock_generator',
+            **feedback
+        }
+        
+        # Convert nested dicts to strings if needed for DynamoDB
+        if 'metadata' in item and isinstance(item['metadata'], dict):
+            # DynamoDB handles nested maps, but let's ensure it's serializable
+            pass
+        
+        # Write to DynamoDB
+        table.put_item(Item=item)
+        
+        print(f"Stored mock feedback {feedback_id} for customer {feedback.get('customer_id')}")
+        print(f"Feedback text: {feedback.get('feedback_text')[:100]}...")
+        print(f"Rating: {feedback.get('rating')}, Channel: {feedback.get('channel')}")
+        
+        # Optionally trigger agent processing if auto-process is enabled
+        trigger_agent_processing_if_enabled(feedback_id, feedback)
+        
+        return {'feedback_id': feedback_id, 'status': 'stored'}
+        
     except Exception as e:
-        print(f"Error invoking feedback ingestion: {e}")
+        print(f"Error storing feedback to DynamoDB: {e}")
+        print(f"Table name: {table_name}")
         raise
+
+def trigger_agent_processing_if_enabled(feedback_id, feedback_data):
+    """Trigger agent processing if auto-process is enabled."""
+    try:
+        dynamodb = boto3.resource('dynamodb')
+        config_table_name = f'{os.environ["STACK_NAME"]}-agent-config-{os.environ["ENVIRONMENT"]}'
+        config_table = dynamodb.Table(config_table_name)
+        
+        # Check if auto-processing is enabled
+        response = config_table.get_item(Key={'config_key': 'auto_process_feedback'})
+        
+        if response.get('Item', {}).get('config_value') == 'true':
+            lambda_client = boto3.client('lambda')
+            agent_function = f'{os.environ["STACK_NAME"]}-agent-invoker-{os.environ["ENVIRONMENT"]}'
+            
+            lambda_client.invoke(
+                FunctionName=agent_function,
+                InvocationType='Event',
+                Payload=json.dumps({
+                    'feedback_id': feedback_id,
+                    'feedback_data': feedback_data
+                })
+            )
+            print(f"Triggered agent processing for feedback {feedback_id}")
+    except Exception as e:
+        # Don't fail if agent processing trigger fails
+        print(f"Could not trigger agent processing: {e}")
 

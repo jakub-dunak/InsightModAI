@@ -14,6 +14,7 @@ import {
   Container,
   CssBaseline,
 } from '@mui/material';
+import awsconfig from '../aws-exports';
 
 // Context for sharing auth state with components outside the Authenticator tree
 const AuthContext = createContext();
@@ -27,7 +28,12 @@ export const useAuthContext = () => {
 };
 
 // Check if we have valid Cognito configuration for authentication
-const hasValidCognitoConfig = process.env.REACT_APP_USER_POOL_ID && process.env.REACT_APP_USER_POOL_CLIENT_ID;
+// Use aws-exports.js configuration (set at build time by CI/CD)
+const hasValidCognitoConfig = 
+  awsconfig.aws_user_pools_id && 
+  awsconfig.aws_user_pools_web_client_id &&
+  !awsconfig.aws_user_pools_id.includes('test') && // Ensure it's not a placeholder
+  !awsconfig.aws_user_pools_web_client_id.includes('test');
 
 // Custom theme for Amplify Authenticator
 const authTheme = {
@@ -239,7 +245,11 @@ const AuthWrapper = ({ children }) => {
             Cognito authentication is not properly configured.
           </Typography>
           <Typography variant="body2" color="textSecondary">
-            Please check that REACT_APP_USER_POOL_ID and REACT_APP_USER_POOL_CLIENT_ID environment variables are set.
+            The application needs to be deployed with valid AWS Cognito credentials.
+            Please check the aws-exports.js configuration.
+          </Typography>
+          <Typography variant="caption" color="textSecondary" sx={{ mt: 2, display: 'block' }}>
+            Current User Pool ID: {awsconfig.aws_user_pools_id}
           </Typography>
         </Paper>
       </Container>

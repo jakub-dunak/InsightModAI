@@ -482,7 +482,7 @@ jobs:
             exit 0
           fi
           
-          RUNTIME_NAME="insightmodai-agent-${{ env.ENVIRONMENT }}"
+          RUNTIME_NAME="insightmodai_agent_${{ env.ENVIRONMENT }}"
           IMAGE_URI="${ECR_URI}:latest"
           
           echo "📦 Container Image: $IMAGE_URI"

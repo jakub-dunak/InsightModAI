@@ -142,12 +142,16 @@ jobs:
           cd agent
           uv run python -m pytest || echo "Tests completed"
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build agent container
         run: |
           cd agent
-          # Pull previous ARM64 image for layer caching if it exists
-          docker pull --platform linux/arm64 insightmodai-agent:latest || true
-          docker build --platform linux/arm64 --cache-from insightmodai-agent:latest -t insightmodai-agent:latest .
+          # Enable QEMU for cross-platform builds
+          docker run --privileged --rm tonistiigi/binfmt --install all
+          # Build ARM64 image for AgentCore Runtime
+          docker buildx build --platform linux/arm64 --load -t insightmodai-agent:latest .
 
       - name: Save container image
         run: |

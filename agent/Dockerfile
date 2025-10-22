@@ -2,7 +2,7 @@
 # Optimized for AWS Lambda and AgentCore Runtime deployment
 
 # Build stage
-FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -13,7 +13,7 @@ COPY pyproject.toml uv.lock* ./
 RUN uv sync --frozen --no-cache
 
 # Runtime stage
-FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \

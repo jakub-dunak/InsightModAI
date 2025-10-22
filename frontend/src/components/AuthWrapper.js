@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, createContext, useContext } from 'react';
 import {
   Authenticator,
   useAuthenticator,
@@ -14,6 +14,17 @@ import {
   Container,
   CssBaseline,
 } from '@mui/material';
+
+// Context for sharing auth state with components outside the Authenticator tree
+const AuthContext = createContext();
+
+export const useAuthContext = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuthContext must be used within an AuthProvider');
+  }
+  return context;
+};
 
 // Check if we have valid Cognito configuration for authentication
 const hasValidCognitoConfig = process.env.REACT_APP_USER_POOL_ID && process.env.REACT_APP_USER_POOL_CLIENT_ID;
@@ -188,16 +199,24 @@ const AuthenticatedWrapper = ({ children }) => {
 
 // Inner component that uses useAuthenticator hook
 const AuthenticatorContent = ({ children }) => {
-  const { authStatus } = useAuthenticator((context) => [context.authStatus]);
+  const { authStatus, user, signOut } = useAuthenticator((context) => [
+    context.authStatus,
+    context.user,
+    context.signOut,
+  ]);
 
   // Show loading while checking authentication status
   if (authStatus === 'configuring') {
     return <AuthLoading />;
   }
 
-  // If authenticated, render the protected content
+  // If authenticated, render the protected content with auth context
   if (authStatus === 'authenticated') {
-    return <>{children}</>;
+    return (
+      <AuthContext.Provider value={{ user, signOut }}>
+        {children}
+      </AuthContext.Provider>
+    );
   }
 
   // Default fallback - this shouldn't be reached since Authenticator handles unauthenticated state

@@ -26,16 +26,13 @@ import {
   Memory,
   Logout,
 } from '@mui/icons-material';
-import { useAuthenticator } from '@aws-amplify/ui-react';
+import { useAuthContext } from './AuthWrapper';
 
 const drawerWidth = 240;
 
 const Layout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { user, signOut } = useAuthenticator((context) => [
-    context.user,
-    context.signOut,
-  ]);
+  const { user, signOut } = useAuthContext();
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();

@@ -530,7 +530,7 @@ jobs:
           echo "⏳ Creating AgentCore Runtime with Memory (this may take a few minutes)..."
           
           # Create AgentCore Runtime with environment variables and memory configuration
-          if RUNTIME_ARN=$(aws bedrock-agentcore create-agent-runtime \
+          if RUNTIME_ARN=$(aws bedrock-agentcore-control create-agent-runtime \
             --agent-runtime-name "$RUNTIME_NAME" \
             --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"$IMAGE_URI\",\"environmentVariables\":{\"FEEDBACK_TABLE_NAME\":\"$FEEDBACK_TABLE\",\"SENTIMENT_TABLE_NAME\":\"$SENTIMENT_TABLE\",\"CONFIG_TABLE_NAME\":\"$CONFIG_TABLE\",\"INSIGHTS_BUCKET_NAME\":\"$INSIGHTS_BUCKET\",\"BEDROCK_MODEL_ID\":\"us.anthropic.claude-3-5-sonnet-20241022-v2:0\",\"ENVIRONMENT\":\"${{ env.ENVIRONMENT }}\",\"AWS_REGION\":\"us-west-2\"}}}" \
             --network-configuration '{"networkMode":"PUBLIC"}' \
@@ -555,7 +555,7 @@ jobs:
             echo "💾 Runtime ARN stored in SSM Parameter Store"
             
             # Get memory ID from runtime
-            MEMORY_ID=$(aws bedrock-agentcore get-agent-runtime \
+            MEMORY_ID=$(aws bedrock-agentcore-control get-agent-runtime \
               --agent-runtime-arn "$RUNTIME_ARN" \
               --region us-west-2 \
               --query 'memoryConfiguration.memoryId' \

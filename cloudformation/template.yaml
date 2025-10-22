@@ -1224,6 +1224,17 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
         - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Policies:
+        - PolicyName: SSMParameterAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/insightmodai/*'
 
   # =============================================================================
   # SSM PARAMETERS FOR CONFIGURATION
@@ -1297,3 +1308,9 @@ Outputs:
     Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/insightmodai-agent-${EnvironmentName}'
     Export:
       Name: !Sub '${AWS::StackName}-ecr-uri-${EnvironmentName}'
+
+  AgentCoreRuntimeRoleArn:
+    Description: 'IAM Role ARN for AgentCore Runtime execution'
+    Value: !GetAtt AgentCoreRuntimeRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-agentcore-role-arn-${EnvironmentName}'

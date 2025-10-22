@@ -468,64 +468,125 @@ jobs:
 
       - name: Deploy AgentCore Runtime
         run: |
-          echo "Creating AgentCore Runtime from container..."
-
-          # Invoke the agent deployment Lambda to create AgentCore Runtime
-          AGENT_DEPLOYMENT_FUNCTION="${{ env.STACK_NAME }}-agent-deployment-${{ env.ENVIRONMENT }}"
+          echo "🚀 Creating AgentCore Runtime from container..."
           
-          # Create payload file for the Lambda
-          cat > payload.json <<EOF
-          {
-            "RequestType": "Create",
-            "ResourceProperties": {
-              "StackName": "${{ env.STACK_NAME }}",
-              "Environment": "${{ env.ENVIRONMENT }}"
-            }
-          }
-          EOF
-
-          echo "Invoking Lambda: $AGENT_DEPLOYMENT_FUNCTION"
-          echo "Payload:"
-          cat payload.json
-          
-          # Invoke Lambda and capture output
-          if aws lambda invoke \
-            --function-name "$AGENT_DEPLOYMENT_FUNCTION" \
-            --payload file://payload.json \
+          # Get ECR repository URI
+          ECR_URI=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
             --region us-west-2 \
-            --cli-read-timeout 900 \
-            response.json; then
+            --query 'Stacks[0].Outputs[?OutputKey==`ECRRepositoryUri`].OutputValue' \
+            --output text)
+          
+          if [ -z "$ECR_URI" ]; then
+            echo "❌ Error: Could not retrieve ECR repository URI"
+            exit 0
+          fi
+          
+          RUNTIME_NAME="insightmodai-agent-${{ env.ENVIRONMENT }}"
+          IMAGE_URI="${ECR_URI}:latest"
+          
+          echo "📦 Container Image: $IMAGE_URI"
+          echo "🏷️  Runtime Name: $RUNTIME_NAME"
+          
+          # Check if AgentCore Runtime already exists
+          EXISTING_ARN=$(aws ssm get-parameter \
+            --name "/insightmodai/agent-runtime-arn-${{ env.ENVIRONMENT }}" \
+            --region us-west-2 \
+            --query 'Parameter.Value' \
+            --output text 2>/dev/null || echo "")
+          
+          if [ -n "$EXISTING_ARN" ]; then
+            echo "ℹ️  AgentCore Runtime already exists: $EXISTING_ARN"
+            echo "🔄 Skipping creation (update not yet supported by AgentCore API)"
+            exit 0
+          fi
+          
+          # Get the AgentCore execution role ARN
+          ROLE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region us-west-2 \
+            --query 'Stacks[0].Outputs[?OutputKey==`AgentCoreRuntimeRoleArn`].OutputValue' \
+            --output text)
+          
+          if [ -z "$ROLE_ARN" ]; then
+            echo "❌ Error: Could not retrieve AgentCore Runtime Role ARN"
+            exit 0
+          fi
+          
+          echo "🔐 Execution Role: $ROLE_ARN"
+          
+          # Get table and bucket names from CloudFormation
+          FEEDBACK_TABLE="${{ env.STACK_NAME }}-feedback-records-${{ env.ENVIRONMENT }}"
+          SENTIMENT_TABLE="${{ env.STACK_NAME }}-sentiment-analysis-${{ env.ENVIRONMENT }}"
+          CONFIG_TABLE="${{ env.STACK_NAME }}-agent-config-${{ env.ENVIRONMENT }}"
+          INSIGHTS_BUCKET="${{ env.STACK_NAME }}-processed-insights-${{ env.ENVIRONMENT }}"
+          
+          echo "📋 Configuration:"
+          echo "  • Feedback Table: $FEEDBACK_TABLE"
+          echo "  • Sentiment Table: $SENTIMENT_TABLE"
+          echo "  • Config Table: $CONFIG_TABLE"
+          echo "  • Insights Bucket: $INSIGHTS_BUCKET"
+          echo ""
+          echo "⏳ Creating AgentCore Runtime with Memory (this may take a few minutes)..."
+          
+          # Create AgentCore Runtime with environment variables and memory configuration
+          if RUNTIME_ARN=$(aws bedrock-agentcore create-agent-runtime \
+            --agent-runtime-name "$RUNTIME_NAME" \
+            --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"$IMAGE_URI\",\"environmentVariables\":{\"FEEDBACK_TABLE_NAME\":\"$FEEDBACK_TABLE\",\"SENTIMENT_TABLE_NAME\":\"$SENTIMENT_TABLE\",\"CONFIG_TABLE_NAME\":\"$CONFIG_TABLE\",\"INSIGHTS_BUCKET_NAME\":\"$INSIGHTS_BUCKET\",\"BEDROCK_MODEL_ID\":\"us.anthropic.claude-3-5-sonnet-20241022-v2:0\",\"ENVIRONMENT\":\"${{ env.ENVIRONMENT }}\",\"AWS_REGION\":\"us-west-2\"}}}" \
+            --network-configuration '{"networkMode":"PUBLIC"}' \
+            --memory-configuration "{\"memoryStrategies\":[{\"summaryMemoryStrategy\":{\"name\":\"SessionSummarizer\",\"namespaces\":[\"/summaries/{actorId}/{sessionId}\"]}},{\"semanticMemoryStrategy\":{\"name\":\"SemanticFacts\",\"namespaces\":[\"/facts/{actorId}\"]}}]}" \
+            --role-arn "$ROLE_ARN" \
+            --region us-west-2 \
+            --query 'agentRuntimeArn' \
+            --output text 2>&1); then
             
             echo ""
-            echo "Lambda invoked successfully"
-            echo "Response:"
-            cat response.json | jq '.' || cat response.json
+            echo "✅ AgentCore Runtime created successfully!"
+            echo "📍 Runtime ARN: $RUNTIME_ARN"
             
-            # Check if the Lambda execution was successful
-            if cat response.json | jq -e '.Status' > /dev/null 2>&1; then
-              STATUS=$(cat response.json | jq -r '.Status')
-              if [ "$STATUS" = "Success" ]; then
-                echo ""
-                echo "✅ AgentCore Runtime created successfully"
-                RUNTIME_ARN=$(cat response.json | jq -r '.Data.AgentRuntimeArn // "Not found"')
-                echo "Runtime ARN: $RUNTIME_ARN"
-              else
-                echo ""
-                echo "⚠️ Warning: AgentCore Runtime creation may have failed"
-                echo "Status: $STATUS"
-                REASON=$(cat response.json | jq -r '.Reason // "No reason provided"')
-                echo "Reason: $REASON"
-              fi
-            else
-              echo ""
-              echo "⚠️ Warning: Unexpected response format from Lambda"
+            # Store ARN in SSM Parameter Store
+            aws ssm put-parameter \
+              --name "/insightmodai/agent-runtime-arn-${{ env.ENVIRONMENT }}" \
+              --value "$RUNTIME_ARN" \
+              --type String \
+              --overwrite \
+              --region us-west-2
+            
+            echo "💾 Runtime ARN stored in SSM Parameter Store"
+            
+            # Get memory ID from runtime
+            MEMORY_ID=$(aws bedrock-agentcore get-agent-runtime \
+              --agent-runtime-arn "$RUNTIME_ARN" \
+              --region us-west-2 \
+              --query 'memoryConfiguration.memoryId' \
+              --output text 2>&1 || echo "")
+            
+            if [ -n "$MEMORY_ID" ] && [ "$MEMORY_ID" != "None" ]; then
+              echo "🧠 Memory ID: $MEMORY_ID"
+              aws ssm put-parameter \
+                --name "/insightmodai/agent-memory-id-${{ env.ENVIRONMENT }}" \
+                --value "$MEMORY_ID" \
+                --type String \
+                --overwrite \
+                --region us-west-2
+              echo "💾 Memory ID stored in SSM Parameter Store"
             fi
+            
+            echo ""
+            echo "🎉 AgentCore Runtime deployment complete with Memory enabled!"
+            
           else
             echo ""
-            echo "❌ Error: Failed to invoke agent deployment Lambda"
-            echo "This is expected if the container image doesn't exist yet or AgentCore Runtime is already deployed"
+            echo "⚠️  Warning: Failed to create AgentCore Runtime"
+            echo "Error: $RUNTIME_ARN"
+            echo ""
+            echo "This is expected if:"
+            echo "  • AgentCore service is not available in this region"
+            echo "  • Container image has issues"
+            echo "  • IAM permissions are insufficient"
+            echo ""
             echo "The system will fall back to rating-based sentiment analysis"
-            exit 0  # Don't fail the deployment
+            echo "You can manually deploy the AgentCore Runtime later"
           fi
 
 

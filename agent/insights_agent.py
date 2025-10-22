@@ -2,7 +2,7 @@
 InsightModAI Agent - Main Strands Agent for Customer Insights Analysis
 
 This agent processes customer feedback, performs sentiment analysis, generates insights,
-and optionally integrates with CRM systems using Amazon Bedrock AgentCore Runtime.
+and optionally integrates with CRM systems using Amazon Bedrock AgentCore Runtime with Memory.
 """
 
 import json
@@ -16,6 +16,7 @@ from typing import Dict, List, Any, Optional
 from strands import Agent, tool
 from strands.models import BedrockModel
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+from bedrock_agentcore.memory import MemoryClient
 
 # Initialize the Bedrock AgentCore App
 app = BedrockAgentCoreApp()
@@ -28,12 +29,26 @@ bedrock_model = BedrockModel(model_id=model_id)
 dynamodb = boto3.resource('dynamodb')
 s3 = boto3.client('s3')
 lambda_client = boto3.client('lambda')
+ssm = boto3.client('ssm')
+
+# Initialize Memory Client
+memory_client = MemoryClient(region_name=os.getenv('AWS_REGION', 'us-west-2'))
 
 # Table names from environment variables (set by CloudFormation)
 FEEDBACK_TABLE = os.getenv('FEEDBACK_TABLE_NAME')
 SENTIMENT_TABLE = os.getenv('SENTIMENT_TABLE_NAME')
 CONFIG_TABLE = os.getenv('CONFIG_TABLE_NAME')
 INSIGHTS_BUCKET = os.getenv('INSIGHTS_BUCKET_NAME')
+ENVIRONMENT = os.getenv('ENVIRONMENT', 'dev')
+
+# Get Memory ID from SSM Parameter Store
+try:
+    memory_param = ssm.get_parameter(Name=f'/insightmodai/agent-memory-id-{ENVIRONMENT}')
+    MEMORY_ID = memory_param['Parameter']['Value']
+    print(f"🧠 Using AgentCore Memory: {MEMORY_ID}")
+except ssm.exceptions.ParameterNotFound:
+    MEMORY_ID = None
+    print("⚠️  Memory ID not found - memory features disabled")
 
 # Validate required environment variables
 if not FEEDBACK_TABLE or not SENTIMENT_TABLE or not CONFIG_TABLE:
@@ -458,6 +473,7 @@ agent = Agent(
 async def insights_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Main agent entrypoint for processing customer feedback and generating insights.
+    Uses AgentCore Memory for conversation history and semantic context.
 
     Args:
         payload: Input payload containing prompt and context
@@ -469,9 +485,41 @@ async def insights_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
         # Extract input data
         user_input = payload.get('prompt', '')
         feedback_id = payload.get('feedback_id')
-        customer_id = payload.get('customer_id')
-        channel = payload.get('channel')
+        customer_id = payload.get('customer_id') or 'anonymous'
+        channel = payload.get('channel') or 'unknown'
+        session_id = payload.get('session_id', feedback_id or str(uuid.uuid4()))
         context = payload.get('context', {})
+
+        # Retrieve memories from AgentCore if available
+        memory_context = ""
+        if MEMORY_ID:
+            try:
+                # Retrieve session summaries
+                session_memories = memory_client.retrieve_memories(
+                    memory_id=MEMORY_ID,
+                    namespace=f"/summaries/{customer_id}/{session_id}",
+                    query=f"Previous interactions with customer {customer_id}"
+                )
+                
+                # Retrieve semantic facts about the customer
+                fact_memories = memory_client.retrieve_memories(
+                    memory_id=MEMORY_ID,
+                    namespace=f"/facts/{customer_id}",
+                    query=f"Known facts and preferences for customer {customer_id}"
+                )
+                
+                if session_memories or fact_memories:
+                    memory_context = "\n\n📝 Relevant Memory Context:\n"
+                    if session_memories:
+                        memory_context += "Session History:\n"
+                        for mem in session_memories.get('memories', [])[:3]:
+                            memory_context += f"  • {mem.get('content', '')}\n"
+                    if fact_memories:
+                        memory_context += "Customer Facts:\n"
+                        for mem in fact_memories.get('memories', [])[:3]:
+                            memory_context += f"  • {mem.get('content', '')}\n"
+            except Exception as e:
+                print(f"Warning: Could not retrieve memories: {e}")
 
         # Build enhanced prompt with context
         enhanced_prompt = f"""
@@ -479,8 +527,10 @@ async def insights_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         Context:
         - Feedback ID: {feedback_id or 'N/A'}
-        - Customer ID: {customer_id or 'N/A'}
-        - Channel: {channel or 'N/A'}
+        - Customer ID: {customer_id}
+        - Channel: {channel}
+        - Session ID: {session_id}
+        {memory_context}
 
         Previous sentiment history for this customer:
         """
@@ -498,13 +548,33 @@ async def insights_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         # Process with the agent
         response = agent(enhanced_prompt)
+        response_text = response.message['content'][0]['text']
+
+        # Store conversation in AgentCore Memory
+        if MEMORY_ID:
+            try:
+                memory_client.create_event(
+                    memory_id=MEMORY_ID,
+                    actor_id=customer_id,
+                    session_id=session_id,
+                    messages=[
+                        (user_input, "USER"),
+                        (response_text, "ASSISTANT")
+                    ]
+                )
+                print(f"✅ Stored conversation in AgentCore Memory for customer {customer_id}")
+            except Exception as e:
+                print(f"Warning: Could not store memory: {e}")
 
         # Return structured response
         return {
-            "response": response.message['content'][0]['text'],
+            "response": response_text,
             "feedback_id": feedback_id,
+            "session_id": session_id,
+            "customer_id": customer_id,
             "timestamp": datetime.utcnow().isoformat(),
             "model_used": model_id,
+            "memory_enabled": MEMORY_ID is not None,
             "tools_used": [tool.__name__ for tool in agent.tools if hasattr(tool, '__name__')]
         }
 

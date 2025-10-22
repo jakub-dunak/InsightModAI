@@ -26,13 +26,16 @@ import {
   Memory,
   Logout,
 } from '@mui/icons-material';
-import { useAuth } from '../services/auth';
+import { useAuthenticator } from '@aws-amplify/ui-react';
 
 const drawerWidth = 240;
 
 const Layout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { user, signOut } = useAuth();
+  const { user, signOut } = useAuthenticator((context) => [
+    context.user,
+    context.signOut,
+  ]);
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
@@ -45,7 +48,6 @@ const Layout = () => {
   const handleSignOut = async () => {
     try {
       await signOut();
-      navigate('/login');
     } catch (error) {
       console.error('Sign out error:', error);
     }
@@ -118,7 +120,7 @@ const Layout = () => {
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography variant="body2">
-              {user?.attributes?.email || 'User'}
+              {user?.attributes?.email || user?.username || 'User'}
             </Typography>
             <Button
               color="inherit"

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo } from 'react';
 import axios from 'axios';
-import { useAuth } from './auth';
+import { Auth } from 'aws-amplify';
 
 const APIContext = createContext();
 
@@ -13,8 +13,6 @@ export const useAPI = () => {
 };
 
 export const APIProvider = ({ children }) => {
-  const { getAccessToken, signOut } = useAuth();
-
   const api = useMemo(() => {
     // Create axios instance
     const instance = axios.create({
@@ -26,13 +24,16 @@ export const APIProvider = ({ children }) => {
     instance.interceptors.request.use(
       async (config) => {
         try {
-          const token = await getAccessToken();
+          // Use Amplify Auth directly instead of custom auth hook
+          const session = await Auth.currentSession();
+          const token = session.getAccessToken().getJwtToken();
           if (token) {
             config.headers.Authorization = `Bearer ${token}`;
           }
           return config;
         } catch (error) {
           console.error('Error getting access token:', error);
+          // Don't fail the request if we can't get the token - let it proceed without auth
           return config;
         }
       },
@@ -46,10 +47,10 @@ export const APIProvider = ({ children }) => {
       (response) => response,
       async (error) => {
         if (error.response?.status === 401) {
-          // Token expired or invalid - sign out user
+          // Token expired or invalid - sign out user using Amplify Auth
           console.error('Unauthorized - token may be expired');
           try {
-            await signOut();
+            await Auth.signOut();
           } catch (signOutError) {
             console.error('Error during sign out:', signOutError);
           }
@@ -63,7 +64,7 @@ export const APIProvider = ({ children }) => {
     );
 
     return instance;
-  }, [getAccessToken, signOut]);
+  }, []); // No dependencies needed since we're using Auth directly
 
   const value = {
     api,
